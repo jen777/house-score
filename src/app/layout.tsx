@@ -29,6 +29,9 @@ export default function RootLayout({
                 <Link href="/compare" className="hover:text-brand">
                   Compare
                 </Link>
+                <Link href="/map" className="hover:text-brand">
+                  Map
+                </Link>
                 <Link href="/properties/new" className="btn">
                   + Add house
                 </Link>

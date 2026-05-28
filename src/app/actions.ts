@@ -14,6 +14,7 @@ import {
 } from "@/db/schema";
 import { AUTH_COOKIE, verifyPassword, expectedToken } from "@/lib/auth";
 import { extractListingFeatures } from "@/lib/ai";
+import { geocode } from "@/lib/geocode";
 import { recomputeProperty, SCORE_COLUMN } from "@/lib/recompute";
 import { CATEGORIES } from "@/lib/scoring";
 
@@ -91,27 +92,77 @@ export async function createPropertyAction(formData: FormData) {
   const address = String(formData.get("address") ?? "").trim();
   if (!address) redirect("/properties/new?error=address");
 
+  const fields = propertyFieldsFromForm(formData);
+  const coords = await geocode({
+    address,
+    city: fields.city,
+    state: fields.state,
+    zip: fields.zip,
+  });
+
   const [row] = await db
     .insert(properties)
     .values({
       address,
       status: "New",
-      ...propertyFieldsFromForm(formData),
+      latitude: coords?.latitude ?? null,
+      longitude: coords?.longitude ?? null,
+      ...fields,
     })
     .returning({ id: properties.id });
 
   await recomputeProperty(row.id);
   revalidatePath("/");
+  revalidatePath("/map");
   redirect(`/properties/${row.id}`);
 }
 
 export async function updatePropertyAction(formData: FormData) {
   const id = String(formData.get("id"));
+  const address = String(formData.get("address") ?? "").trim();
+  const fields = propertyFieldsFromForm(formData);
+
+  // Re-geocode only when an address part changed or coordinates are missing,
+  // to avoid spending a geocoding call on every edit.
+  const [existing] = await db
+    .select({
+      address: properties.address,
+      city: properties.city,
+      state: properties.state,
+      zip: properties.zip,
+      latitude: properties.latitude,
+      longitude: properties.longitude,
+    })
+    .from(properties)
+    .where(eq(properties.id, id));
+
+  const addressChanged =
+    !existing ||
+    existing.address !== address ||
+    existing.city !== fields.city ||
+    existing.state !== fields.state ||
+    existing.zip !== fields.zip;
+  const needsCoords = existing?.latitude == null || existing?.longitude == null;
+
+  const coordsPatch: { latitude?: number | null; longitude?: number | null } =
+    {};
+  if (addressChanged || needsCoords) {
+    const coords = await geocode({
+      address,
+      city: fields.city,
+      state: fields.state,
+      zip: fields.zip,
+    });
+    coordsPatch.latitude = coords?.latitude ?? null;
+    coordsPatch.longitude = coords?.longitude ?? null;
+  }
+
   await db
     .update(properties)
     .set({
-      address: String(formData.get("address") ?? "").trim(),
-      ...propertyFieldsFromForm(formData),
+      address,
+      ...fields,
+      ...coordsPatch,
       updatedAt: new Date(),
     })
     .where(eq(properties.id, id));
@@ -119,6 +170,7 @@ export async function updatePropertyAction(formData: FormData) {
   await recomputeProperty(id);
   revalidatePath(`/properties/${id}`);
   revalidatePath("/");
+  revalidatePath("/map");
 }
 
 export async function deletePropertyAction(formData: FormData) {

@@ -14,9 +14,9 @@ and condition/risk/resale — rolled into a **Weighted Score out of 100** and a
 > **Status:** Phase 1 implemented. A working Next.js + Postgres app: add houses,
 > paste a listing, run Claude extraction, rate the 7 categories (1–5) to get a
 > weighted score + recommendation + estimated monthly payment, compare side by
-> side, and track status. Ships as a Docker Compose stack for Coolify.
-> See [`docs/`](docs/) for the full design and [`docs/DEPLOY.md`](docs/DEPLOY.md)
-> for deployment.
+> side, view saved homes on a map, and track status. Ships as a Docker Compose
+> stack for Coolify. See [`docs/`](docs/) for the full design and
+> [`docs/DEPLOY.md`](docs/DEPLOY.md) for deployment.
 
 ## The core idea
 
@@ -53,6 +53,7 @@ password gate (we grow into Supabase Auth / managed Postgres later).
 | Database         | Postgres 16 (in compose) via Drizzle ORM | Supabase Postgres (+ PostGIS) |
 | Auth             | Single-user password gate (cookie)     | Supabase Auth |
 | AI extraction    | Claude API (Anthropic)                 | same |
+| Maps / geocoding | Google Maps + Geocoding (optional)     | same |
 | Property data    | Manual + AI extraction                 | RentCast → ATTOM |
 | Deployment       | Docker Compose (Coolify proxies)       | same |
 
@@ -78,6 +79,7 @@ src/
     properties/new      add a house
     properties/[id]     detail: 1–5 category ratings, AI extraction, notes, edit
     compare             side-by-side comparison
+    map                 Google Map of saved homes, pins colored by recommendation
     login               single-user password gate
   db/                   Drizzle schema, client, startup schema init (ensure-schema)
   lib/                  scoring engine (pure), Claude extraction, auth, UI helpers
