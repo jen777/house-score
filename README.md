@@ -4,8 +4,12 @@ A personal real estate **decision engine** — not just a house tracker.
 
 HouseScore helps you capture homes you're considering, enrich them with legal
 property data, extract signal from listing descriptions with AI, and rank them
-against a scoring model that blends **objective data** with your **personal fit**
-(family, commute, toddler-friendliness, community feel, HOA risk, resale).
+against a scoring model adapted from the owner's house-comparison tracker:
+**7 weighted categories rated 1–5** — location/walkability, community/kids
+amenities, layout/family fit, schools/childcare, commute/access, financial fit,
+and condition/risk/resale — rolled into a **Weighted Score out of 100** and a
+**Recommendation** (Strong candidate / Good option / Maybe / Pass). See
+[`docs/SCORING.md`](docs/SCORING.md).
 
 > **Status:** Phase 1 implemented. A working Next.js + Postgres app: add houses,
 > paste a listing, run Claude extraction, compute scores, override them, compare
@@ -99,6 +103,6 @@ Full breakdown in [`docs/ROADMAP.md`](docs/ROADMAP.md).
 | [`docs/ROADMAP.md`](docs/ROADMAP.md)             | Phased plan, MVP scope, milestones |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)   | Stack, system design, request flow |
 | [`docs/DATA_MODEL.md`](docs/DATA_MODEL.md)       | Postgres tables and relationships  |
-| [`docs/SCORING.md`](docs/SCORING.md)             | Objective + personal-fit scoring model |
+| [`docs/SCORING.md`](docs/SCORING.md)             | 7-category 1–5 scoring model, formulas, rubric (from the tracker) |
 | [`docs/AI_EXTRACTION.md`](docs/AI_EXTRACTION.md) | Claude-based listing feature extraction |
 | [`docs/DATA_SOURCES.md`](docs/DATA_SOURCES.md)   | Legal data sourcing, APIs, compliance |

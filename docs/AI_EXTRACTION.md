@@ -58,12 +58,20 @@ populate `property_features` and feed the scoring engine.
   are *hints*; authoritative values come from the API (Phase 2) or user. Provenance
   is recorded in `property_field_provenance` with `source = 'listing'`,
   confidence usually `low`/`medium`.
-- **Map to scoring.** Extracted lists feed:
-  - `family_friendly_features` / `toddler_friendly_score` (seed, user overrides)
-  - `walking_features` → `walkability_score` (seed)
-  - `renovation_risk` → `condition_score`
-  - `community_amenities` + `hoa_signals` → `hoa_score`
-  - `concerns` → surfaced as flags, not auto-penalties unless mapped
+- **Map to the 7 scoring categories.** The model can propose a **1–5 rating**
+  per category (using the rubric in `SCORING.md`), which the user confirms or
+  overrides. Extracted lists feed:
+  - `walking_features` + location cues → **Location / walkability**
+  - `community_amenities` + `hoa_signals` → **Community / kids amenities**
+  - `family_friendly_features` (beds/layout/yard/WFH) → **House layout / family fit**
+  - school/childcare mentions → **Schools / childcare fit**
+  - access/commute mentions → **Commute / access**
+  - price/HOA/tax signals → **Financial fit**
+  - `renovation_risk` + condition cues → **Condition / risk / resale**
+  - `concerns` / red flags → surfaced as flags; a hard deal-breaker should set
+    the property's `must_have_issue = Yes` (which forces a "Pass", see SCORING.md)
+  - Proposed ratings are **suggestions only** with low confidence; the rubric is
+    subjective and the user makes the final call.
 - **Store the raw output** in `property_features.extraction` for traceability,
   plus the `model` id used.
 - **Validate** the JSON against the schema before persisting; on failure, store

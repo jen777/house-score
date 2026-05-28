@@ -5,6 +5,10 @@ Security so the model is multi-user ready even though the MVP is single-user.
 Every enriched field should be paired with a **source** and **confidence** so the
 UI can show provenance.
 
+> The fields and enums below are aligned to the owner's
+> `house_comparison_scoring_tracker.xlsx` (House Tracker columns, Dropdowns, and
+> Weights & Inputs). Scoring uses **7 categories rated 1–5** — see `SCORING.md`.
+
 ## Conventions
 
 - `id` — `uuid` primary key, default `gen_random_uuid()`.
@@ -16,9 +20,15 @@ UI can show provenance.
 
 ## Enums
 
+Values match the tracker's *Dropdowns* sheet.
+
 ```
-property_status : new | maybe | visit | favorite | rejected | offer_candidate
-source_platform : redfin | zillow | realtor | manual | other
+property_status : New | Watching | Tour scheduled | Offer candidate
+                | Rejected | Under contract | Sold
+source_platform : Redfin | Zillow | Realtor.com | MLS/Agent | Other
+recommendation  : Strong candidate | Good option | Maybe | Pass
+                | Pass / must-have issue | Needs data        -- derived; see SCORING.md
+must_have_issue : Yes | No | Maybe
 confidence_level: high | medium | low | unknown
 fee_frequency   : monthly | quarterly | annual | one_time | unknown
 note_category   : general | neighborhood | commute | condition | hoa | financial | visit
@@ -28,32 +38,46 @@ note_category   : general | neighborhood | commute | condition | hoa | financial
 
 The clean canonical record every input converts into.
 
+Columns mirror the tracker's *House Tracker* sheet.
+
 ```
 properties
-- id                uuid pk
-- owner_id          uuid -> auth.users
-- address           text not null
-- city              text
-- state             text
-- zip               text
-- latitude          double precision
-- longitude         double precision
-- location          geography(Point, 4326)
-- listing_url       text            -- user-pasted reference only
-- source            source_platform
-- mls_number        text
-- status            property_status default 'new'
-- price             numeric
-- beds              numeric
-- baths             numeric
-- sqft              integer
-- lot_size          numeric         -- acres or sqft; keep a unit column if needed
-- year_built        integer
-- hoa_fee           numeric         -- denormalized convenience copy of hoa_details
-- property_type     text            -- single_family | townhome | condo | ...
-- listing_description text          -- raw text fed to AI extraction
-- created_at        timestamptz default now()
-- updated_at        timestamptz default now()
+- id                  uuid pk
+- owner_id            uuid -> auth.users
+- status              property_status default 'New'
+- address             text not null
+- community_hoa       text            -- "Community / HOA" name
+- city_area           text            -- "City / Area", e.g. "South Charlotte / Ballantyne"
+- city                text
+- state               text
+- zip                 text
+- latitude            double precision
+- longitude           double precision
+- location            geography(Point, 4326)
+- listing_url         text            -- user-pasted reference only
+- source              source_platform
+- mls_number          text
+- price               numeric
+- beds                numeric
+- baths               numeric
+- sqft                integer
+- lot_acres           numeric         -- "Lot Acres"
+- year_built          integer
+- hoa_monthly         numeric         -- "HOA Monthly"
+- taxes_annual        numeric         -- "Taxes Annual"; if null, est from property_tax_rate
+- est_monthly_payment numeric         -- computed; see SCORING.md
+- days_on_market      integer
+- school_rating       numeric         -- e.g. 0–10
+- commute_salisbury_min integer       -- "Commute to Salisbury Min"
+- commute_charlotte_min integer       -- "Commute to Charlotte/Uptown Min"
+- access_notes        text            -- "Access / Transit Notes"
+- amenities_notes     text            -- "Amenities Notes"
+- risks_red_flags     text            -- "Risks / Red Flags"
+- must_have_issue     must_have_issue default 'No'   -- deal-breaker gate (see SCORING.md)
+- property_type       text            -- single_family | townhome | condo | ...
+- listing_description text            -- raw text fed to AI extraction
+- created_at          timestamptz default now()
+- updated_at          timestamptz default now()
 ```
 
 ## `property_field_provenance` (optional but recommended)
@@ -74,41 +98,41 @@ property_field_provenance
 
 ## `property_scores`
 
-One row per property; recomputed by the scoring engine and updated on override.
+One row per property: the **seven 1–5 category ratings** plus the derived
+weighted score and recommendation. Each rating is an integer 1–5 (or null =
+unrated, which counts as 0 in the weighted score — see `SCORING.md`).
 
 ```
 property_scores
-- property_id           uuid pk -> properties (on delete cascade)
-- price_score           numeric
-- monthly_cost_score    numeric
-- commute_score         numeric
-- school_score          numeric
-- walkability_score     numeric
-- toddler_friendly_score numeric
-- community_score       numeric
-- hoa_score             numeric
-- condition_score       numeric
-- resale_score          numeric
-- emotional_fit_score   numeric
-- total_weighted_score  numeric
-- computed_at           timestamptz default now()
+- property_id                 uuid pk -> properties (on delete cascade)
+- location_walkability        smallint   -- 1..5   (weight 20)
+- community_kids              smallint   -- 1..5   (weight 15)
+- layout_family_fit          smallint   -- 1..5   (weight 20)
+- schools_childcare          smallint   -- 1..5   (weight 10)
+- commute_access             smallint   -- 1..5   (weight 10)
+- financial_fit              smallint   -- 1..5   (weight 15)
+- condition_risk_resale      smallint   -- 1..5   (weight 10)
+- weighted_score             numeric    -- 0..100, = Σ(rating×weight)/Σ(weight)×20
+- recommendation             recommendation  -- derived from weighted_score + must_have_issue
+- computed_at                timestamptz default now()
 ```
 
-See `SCORING.md` for ranges, weights, and which scores are objective vs manual.
+See `SCORING.md` for the exact formula, the rubric (what each 1–5 means), and
+the recommendation bands.
 
-## `score_overrides`
+## `score_notes`
 
-Lets the user override any individual score without losing the computed value.
+Optional free-text rationale per category rating (the rubric encourages a
+"why" behind each score). Not in the spreadsheet, but useful in the app.
 
 ```
-score_overrides
+score_notes
 - id            uuid pk
 - property_id   uuid -> properties (on delete cascade)
-- score_name    text           -- matches a column in property_scores
-- value         numeric
-- reason        text
+- category      text           -- one of the 7 category keys
+- note          text
 - created_at    timestamptz default now()
-- unique (property_id, score_name)
+- unique (property_id, category)
 ```
 
 ## `hoa_details`
@@ -164,14 +188,25 @@ property_notes
 - created_at    timestamptz default now()
 ```
 
-## `scoring_weights`
+## `scoring_config`
 
-Per-owner tunable weights so the ranking reflects the user's priorities.
+Per-owner tunable category **weights** and financial/commute **inputs** (the
+tracker's *Weights & Inputs* sheet). Defaults match the current tracker values.
 
 ```
-scoring_weights
+scoring_config
 - owner_id      uuid pk -> auth.users
-- weights       jsonb   -- { "price": 0.1, "monthly_cost": 0.15, "commute": 0.1, ... }
+- weights       jsonb   -- { "location_walkability": 20, "community_kids": 15,
+                        --   "layout_family_fit": 20, "schools_childcare": 10,
+                        --   "commute_access": 10, "financial_fit": 15,
+                        --   "condition_risk_resale": 10 }   (sum = 100)
+- inputs        jsonb   -- { "max_budget": 650000, "preferred_price": 575000,
+                        --   "comfortable_monthly": 4500, "min_bedrooms": 3,
+                        --   "down_payment_pct": 0.20, "interest_rate": 0.065,
+                        --   "loan_term_years": 30, "property_tax_rate": 0.011,
+                        --   "annual_insurance": 1800,
+                        --   "target_commute_salisbury_min": 45,
+                        --   "target_commute_charlotte_min": 25 }
 - updated_at    timestamptz default now()
 ```
 
@@ -184,6 +219,6 @@ properties 1───1 hoa_details
 properties 1───1 property_features
 properties 1───* property_notes
 properties 1───* property_field_provenance
-properties 1───* score_overrides
-auth.users 1───1 scoring_weights
+properties 1───* score_notes
+auth.users 1───1 scoring_config
 ```

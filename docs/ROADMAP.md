@@ -20,10 +20,13 @@ paid external APIs required yet.
 3. **AI extraction:** paste listing description → Claude extracts structured
    features, amenities, concerns, and an emotional-fit summary.
 4. **Auto-fill** features and concerns from the extraction, with manual override.
-5. **Scoring:** compute objective + personal-fit scores → total weighted score.
-6. **Manual override** of any score and any extracted field.
+5. **Scoring:** rate 7 categories 1–5 (AI can propose, user confirms) → Weighted
+   Score out of 100 → Recommendation. See `SCORING.md`.
+6. **Manual override** of any rating and any extracted field; `must_have_issue`
+   flag forces a Pass.
 7. **Compare** top houses side by side.
-8. **Status tracking:** new → maybe → visit → favorite → rejected → offer candidate.
+8. **Status tracking:** New → Watching → Tour scheduled → Offer candidate →
+   Rejected → Under contract → Sold.
 9. **Map** of saved communities (Mapbox/Google).
 10. **Notes** per property, categorized.
 
