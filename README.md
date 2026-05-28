@@ -7,8 +7,11 @@ property data, extract signal from listing descriptions with AI, and rank them
 against a scoring model that blends **objective data** with your **personal fit**
 (family, commute, toddler-friendliness, community feel, HOA risk, resale).
 
-> **Status:** Planning. This repository currently contains the project plan
-> only. See [`docs/`](docs/) for the full design. No application code yet.
+> **Status:** Phase 1 implemented. A working Next.js + Postgres app: add houses,
+> paste a listing, run Claude extraction, compute scores, override them, compare
+> side by side, and track status. Ships as a Docker Compose stack for Coolify.
+> See [`docs/`](docs/) for the full design and [`docs/DEPLOY.md`](docs/DEPLOY.md)
+> for deployment.
 
 ## The core idea
 
@@ -34,16 +37,49 @@ API standard. See [`docs/DATA_SOURCES.md`](docs/DATA_SOURCES.md).
 
 ## Chosen stack
 
-| Layer            | Choice                                 |
-| ---------------- | -------------------------------------- |
-| Frontend         | Next.js (App Router) + React           |
-| Backend          | Next.js Route Handlers / Server Actions |
-| Database         | Supabase Postgres (+ PostGIS for geo)  |
-| Auth             | Supabase Auth                          |
-| AI extraction    | Claude API (Anthropic)                 |
-| Property data    | RentCast (Phase 2) → ATTOM (later)     |
-| Maps             | Mapbox or Google Maps                  |
-| File/doc storage | Supabase Storage                       |
+The plan targets Supabase, but Phase 1 ships **self-contained** for easy
+Docker/Coolify deployment: the app runs its own Postgres and a single-user
+password gate (we grow into Supabase Auth / managed Postgres later).
+
+| Layer            | Phase 1 (now)                          | Plan (later) |
+| ---------------- | -------------------------------------- | ------------ |
+| Frontend         | Next.js (App Router) + React + TS      | same |
+| Backend          | Next.js Server Actions / Route Handlers | same |
+| Database         | Postgres 16 (in compose) via Drizzle ORM | Supabase Postgres (+ PostGIS) |
+| Auth             | Single-user password gate (cookie)     | Supabase Auth |
+| AI extraction    | Claude API (Anthropic)                 | same |
+| Property data    | Manual + AI extraction                 | RentCast → ATTOM |
+| Deployment       | Docker Compose (Coolify proxies)       | same |
+
+## Run it
+
+```bash
+# Local dev
+cp .env.example .env        # set APP_PASSWORD, AUTH_SECRET, ANTHROPIC_API_KEY
+npm install && npm run dev  # http://localhost:3000
+
+# Full stack (as Coolify runs it)
+docker compose up --build
+```
+
+Deployment details (Coolify, env vars, TLS, backups): [`docs/DEPLOY.md`](docs/DEPLOY.md).
+
+## Project layout
+
+```
+src/
+  app/                  Next.js App Router (pages + server actions + /api/health)
+    page.tsx            ranked house list
+    properties/new      add a house
+    properties/[id]     detail: scores, overrides, AI extraction, notes, edit
+    compare             side-by-side comparison
+    login               single-user password gate
+  db/                   Drizzle schema, client, startup schema init (ensure-schema)
+  lib/                  scoring engine (pure), Claude extraction, auth, UI helpers
+  middleware.ts         auth gate for all non-public routes
+Dockerfile              multi-stage standalone build
+docker-compose.yml      app + Postgres, Coolify-friendly
+```
 
 ## Roadmap at a glance
 

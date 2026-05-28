@@ -1,0 +1,62 @@
+# HouseScore — Docker Compose for Coolify
+#
+# Coolify handles the reverse proxy, domain, and TLS for you. In the Coolify UI
+# set the domain on the `app` service; Coolify routes it to the container's
+# internal port 3000 over its own proxy network. That's why we use `expose`
+# (container-internal) instead of `ports` (host-published) — no host port
+# conflicts, and the DB stays private.
+#
+# Required environment variables (set these in Coolify → Environment Variables):
+#   APP_PASSWORD       single-user login password
+#   AUTH_SECRET        long random string used to sign the auth cookie
+#   ANTHROPIC_API_KEY  Claude API key for listing extraction
+#   POSTGRES_PASSWORD  database password
+# See .env.example for the full list and sensible defaults.
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      # App is reached via Coolify's proxy; it listens on 3000 internally.
+      PORT: 3000
+      DATABASE_URL: postgres://${POSTGRES_USER:-housescore}:${POSTGRES_PASSWORD:-housescore}@db:5432/${POSTGRES_DB:-housescore}
+      APP_PASSWORD: ${APP_PASSWORD:-changeme}
+      AUTH_SECRET: ${AUTH_SECRET:-please-change-this-secret}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # Optional: model override for AI extraction.
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-4-6}
+    expose:
+      - "3000"
+    healthcheck:
+      test:
+        ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-housescore}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-housescore}
+      POSTGRES_DB: ${POSTGRES_DB:-housescore}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-housescore} -d ${POSTGRES_DB:-housescore}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  db_data:
