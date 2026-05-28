@@ -2,60 +2,98 @@
 // available at runtime in the Next.js standalone Docker image (where source
 // files like init.sql are not copied). src/db/init.sql mirrors this for manual
 // psql use; keep them in sync.
+//
+// The model matches docs/SCORING.md & docs/DATA_MODEL.md (the owner's
+// house_comparison_scoring_tracker.xlsx): 7 categories rated 1–5. The ALTER
+// statements migrate an existing dev DB created by an earlier draft.
 
 export const SCHEMA_DDL = /* sql */ `
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 CREATE TABLE IF NOT EXISTS properties (
-  id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  address             text NOT NULL,
-  city                text,
-  state               text,
-  zip                 text,
-  latitude            double precision,
-  longitude           double precision,
-  listing_url         text,
-  source              text DEFAULT 'manual',
-  mls_number          text,
-  status              text DEFAULT 'new',
-  price               numeric,
-  beds                numeric,
-  baths               numeric,
-  sqft                integer,
-  lot_size            numeric,
-  year_built          integer,
-  hoa_fee             numeric,
-  property_type       text,
-  listing_description text,
-  created_at          timestamptz DEFAULT now(),
-  updated_at          timestamptz DEFAULT now()
+  id                    uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  status                text DEFAULT 'New',
+  address               text NOT NULL,
+  community_hoa         text,
+  city_area             text,
+  city                  text,
+  state                 text,
+  zip                   text,
+  latitude              double precision,
+  longitude             double precision,
+  listing_url           text,
+  source                text,
+  mls_number            text,
+  price                 numeric,
+  beds                  numeric,
+  baths                 numeric,
+  sqft                  integer,
+  lot_acres             numeric,
+  year_built            integer,
+  hoa_monthly           numeric,
+  taxes_annual          numeric,
+  est_monthly_payment   numeric,
+  days_on_market        integer,
+  school_rating         numeric,
+  commute_salisbury_min integer,
+  commute_charlotte_min integer,
+  access_notes          text,
+  amenities_notes       text,
+  risks_red_flags       text,
+  must_have_issue       text DEFAULT 'No',
+  property_type         text,
+  listing_description   text,
+  created_at            timestamptz DEFAULT now(),
+  updated_at            timestamptz DEFAULT now()
 );
+
+-- Migrate dev DBs created by the earlier 11-dimension draft.
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS community_hoa         text;
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS city_area             text;
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS lot_acres             numeric;
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS hoa_monthly           numeric;
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS taxes_annual          numeric;
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS est_monthly_payment   numeric;
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS days_on_market        integer;
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS school_rating         numeric;
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS commute_salisbury_min integer;
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS commute_charlotte_min integer;
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS access_notes          text;
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS amenities_notes       text;
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS risks_red_flags       text;
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS must_have_issue       text DEFAULT 'No';
 
 CREATE TABLE IF NOT EXISTS property_scores (
-  property_id            uuid PRIMARY KEY REFERENCES properties(id) ON DELETE CASCADE,
-  price_score            numeric,
-  monthly_cost_score     numeric,
-  commute_score          numeric,
-  school_score           numeric,
-  walkability_score      numeric,
-  toddler_friendly_score numeric,
-  community_score        numeric,
-  hoa_score              numeric,
-  condition_score        numeric,
-  resale_score           numeric,
-  emotional_fit_score    numeric,
-  total_weighted_score   numeric,
-  computed_at            timestamptz DEFAULT now()
+  property_id           uuid PRIMARY KEY REFERENCES properties(id) ON DELETE CASCADE,
+  location_walkability  smallint,
+  community_kids        smallint,
+  layout_family_fit     smallint,
+  schools_childcare     smallint,
+  commute_access        smallint,
+  financial_fit         smallint,
+  condition_risk_resale smallint,
+  weighted_score        numeric,
+  recommendation        text,
+  computed_at           timestamptz DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS score_overrides (
+ALTER TABLE property_scores ADD COLUMN IF NOT EXISTS location_walkability  smallint;
+ALTER TABLE property_scores ADD COLUMN IF NOT EXISTS community_kids        smallint;
+ALTER TABLE property_scores ADD COLUMN IF NOT EXISTS layout_family_fit     smallint;
+ALTER TABLE property_scores ADD COLUMN IF NOT EXISTS schools_childcare     smallint;
+ALTER TABLE property_scores ADD COLUMN IF NOT EXISTS commute_access        smallint;
+ALTER TABLE property_scores ADD COLUMN IF NOT EXISTS financial_fit         smallint;
+ALTER TABLE property_scores ADD COLUMN IF NOT EXISTS condition_risk_resale smallint;
+ALTER TABLE property_scores ADD COLUMN IF NOT EXISTS weighted_score        numeric;
+ALTER TABLE property_scores ADD COLUMN IF NOT EXISTS recommendation        text;
+
+CREATE TABLE IF NOT EXISTS score_notes (
   id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   property_id uuid NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
-  score_name  text NOT NULL,
-  value       numeric,
-  reason      text,
+  category    text NOT NULL,
+  note        text,
   created_at  timestamptz DEFAULT now(),
-  UNIQUE (property_id, score_name)
+  UNIQUE (property_id, category)
 );
 
 CREATE TABLE IF NOT EXISTS hoa_details (
@@ -97,9 +135,10 @@ CREATE TABLE IF NOT EXISTS property_notes (
   created_at  timestamptz DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS scoring_weights (
+CREATE TABLE IF NOT EXISTS scoring_config (
   id         integer PRIMARY KEY DEFAULT 1,
   weights    jsonb,
+  inputs     jsonb,
   updated_at timestamptz DEFAULT now()
 );
 

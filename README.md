@@ -12,8 +12,9 @@ and condition/risk/resale — rolled into a **Weighted Score out of 100** and a
 [`docs/SCORING.md`](docs/SCORING.md).
 
 > **Status:** Phase 1 implemented. A working Next.js + Postgres app: add houses,
-> paste a listing, run Claude extraction, compute scores, override them, compare
-> side by side, and track status. Ships as a Docker Compose stack for Coolify.
+> paste a listing, run Claude extraction, rate the 7 categories (1–5) to get a
+> weighted score + recommendation + estimated monthly payment, compare side by
+> side, and track status. Ships as a Docker Compose stack for Coolify.
 > See [`docs/`](docs/) for the full design and [`docs/DEPLOY.md`](docs/DEPLOY.md)
 > for deployment.
 
@@ -75,7 +76,7 @@ src/
   app/                  Next.js App Router (pages + server actions + /api/health)
     page.tsx            ranked house list
     properties/new      add a house
-    properties/[id]     detail: scores, overrides, AI extraction, notes, edit
+    properties/[id]     detail: 1–5 category ratings, AI extraction, notes, edit
     compare             side-by-side comparison
     login               single-user password gate
   db/                   Drizzle schema, client, startup schema init (ensure-schema)

@@ -87,7 +87,8 @@ paid external APIs required yet.
 3. Property CRUD + list view + detail view.
 4. AI extraction endpoint (Claude) + "extract from description" action.
 5. Scoring engine (pure functions, unit-tested) — see `SCORING.md`.
-6. Score override UI + recompute.
+6. Category rating UI (7 categories, 1–5) + recompute of weighted score,
+   recommendation, and estimated monthly payment.
 7. Comparison view.
 8. Map view.
 9. Status workflow + notes.

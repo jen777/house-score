@@ -6,6 +6,7 @@ import {
   STATUS_LABEL,
   STATUS_CLASS,
   scoreClass,
+  recClass,
   fmtMoney,
   fmtNum,
   fmtScore,
@@ -18,21 +19,17 @@ export default async function HomePage() {
     .select({
       id: properties.id,
       address: properties.address,
-      city: properties.city,
-      state: properties.state,
+      communityHoa: properties.communityHoa,
+      cityArea: properties.cityArea,
       status: properties.status,
       price: properties.price,
-      beds: properties.beds,
-      baths: properties.baths,
-      sqft: properties.sqft,
-      total: propertyScores.totalWeightedScore,
+      estMonthly: properties.estMonthlyPayment,
+      total: propertyScores.weightedScore,
+      recommendation: propertyScores.recommendation,
     })
     .from(properties)
-    .leftJoin(
-      propertyScores,
-      eq(properties.id, propertyScores.propertyId),
-    )
-    .orderBy(desc(propertyScores.totalWeightedScore));
+    .leftJoin(propertyScores, eq(properties.id, propertyScores.propertyId))
+    .orderBy(desc(propertyScores.weightedScore));
 
   // Sort: scored first (desc), then unscored.
   const sorted = [...rows].sort((a, b) => {
@@ -41,12 +38,40 @@ export default async function HomePage() {
     return bv - av;
   });
 
+  // Dashboard metrics (mirrors the tracker's Dashboard sheet).
+  const scores = sorted
+    .map((r) => (r.total == null ? null : Number(r.total)))
+    .filter((n): n is number => n != null);
+  const ests = sorted
+    .map((r) => (r.estMonthly == null ? null : Number(r.estMonthly)))
+    .filter((n): n is number => n != null);
+  const metrics = {
+    tracked: sorted.length,
+    highest: scores.length ? Math.max(...scores) : null,
+    strong: sorted.filter((r) => r.recommendation === "Strong candidate")
+      .length,
+    good: sorted.filter((r) => r.recommendation === "Good option").length,
+    avgMonthly: ests.length
+      ? Math.round(ests.reduce((a, b) => a + b, 0) / ests.length)
+      : null,
+  };
+
   return (
     <div>
       <div className="mb-4 flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Houses</h1>
         <p className="text-sm text-slate-500">{sorted.length} tracked</p>
       </div>
+
+      {sorted.length > 0 ? (
+        <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-5">
+          <Metric label="Tracked" value={String(metrics.tracked)} />
+          <Metric label="Highest score" value={fmtScore(metrics.highest)} />
+          <Metric label="Strong candidates" value={String(metrics.strong)} />
+          <Metric label="Good options" value={String(metrics.good)} />
+          <Metric label="Avg est. monthly" value={fmtMoney(metrics.avgMonthly)} />
+        </div>
+      ) : null}
 
       {sorted.length === 0 ? (
         <div className="card text-center text-slate-500">
@@ -61,11 +86,11 @@ export default async function HomePage() {
             <thead className="bg-slate-50 text-left text-slate-500">
               <tr>
                 <th className="px-4 py-2 font-medium">Score</th>
+                <th className="px-4 py-2 font-medium">Recommendation</th>
                 <th className="px-4 py-2 font-medium">Address</th>
                 <th className="px-4 py-2 font-medium">Status</th>
                 <th className="px-4 py-2 font-medium">Price</th>
-                <th className="px-4 py-2 font-medium">Beds/Baths</th>
-                <th className="px-4 py-2 font-medium">Sq ft</th>
+                <th className="px-4 py-2 font-medium">Est. monthly</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -81,6 +106,11 @@ export default async function HomePage() {
                     </span>
                   </td>
                   <td className="px-4 py-2">
+                    <span className={`badge ${recClass(r.recommendation)}`}>
+                      {r.recommendation ?? "Needs data"}
+                    </span>
+                  </td>
+                  <td className="px-4 py-2">
                     <Link
                       href={`/properties/${r.id}`}
                       className="font-medium text-brand hover:underline"
@@ -88,29 +118,35 @@ export default async function HomePage() {
                       {r.address}
                     </Link>
                     <div className="text-xs text-slate-400">
-                      {[r.city, r.state].filter(Boolean).join(", ")}
+                      {[r.communityHoa, r.cityArea].filter(Boolean).join(" · ")}
                     </div>
                   </td>
                   <td className="px-4 py-2">
                     <span
                       className={`badge ${
-                        STATUS_CLASS[r.status ?? "new"] ?? ""
+                        STATUS_CLASS[r.status ?? "New"] ?? ""
                       }`}
                     >
-                      {STATUS_LABEL[r.status ?? "new"] ?? r.status}
+                      {STATUS_LABEL[r.status ?? "New"] ?? r.status}
                     </span>
                   </td>
                   <td className="px-4 py-2">{fmtMoney(r.price)}</td>
-                  <td className="px-4 py-2">
-                    {fmtNum(r.beds)} / {fmtNum(r.baths)}
-                  </td>
-                  <td className="px-4 py-2">{fmtNum(r.sqft)}</td>
+                  <td className="px-4 py-2">{fmtMoney(r.estMonthly)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       )}
+    </div>
+  );
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="card py-3">
+      <p className="text-xs text-slate-400">{label}</p>
+      <p className="text-xl font-semibold">{value}</p>
     </div>
   );
 }

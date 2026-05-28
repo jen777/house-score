@@ -4,6 +4,7 @@ import {
   text,
   integer,
   numeric,
+  smallint,
   boolean,
   timestamp,
   jsonb,
@@ -11,27 +12,40 @@ import {
 } from "drizzle-orm/pg-core";
 
 // Single-user Phase 1: no owner_id / RLS yet (see docs/DATA_MODEL.md for the
-// multi-user-ready design we'll grow into).
+// multi-user-ready design we'll grow into). Columns mirror the owner's
+// house_comparison_scoring_tracker.xlsx.
 
 export const properties = pgTable("properties", {
   id: uuid("id").primaryKey().defaultRandom(),
+  status: text("status").default("New"), // see STATUSES in lib/ui
   address: text("address").notNull(),
+  communityHoa: text("community_hoa"),
+  cityArea: text("city_area"),
   city: text("city"),
   state: text("state"),
   zip: text("zip"),
   latitude: doublePrecision("latitude"),
   longitude: doublePrecision("longitude"),
   listingUrl: text("listing_url"),
-  source: text("source").default("manual"), // redfin|zillow|realtor|manual|other
+  source: text("source"), // Redfin|Zillow|Realtor.com|MLS/Agent|Other
   mlsNumber: text("mls_number"),
-  status: text("status").default("new"), // new|maybe|visit|favorite|rejected|offer_candidate
   price: numeric("price"),
   beds: numeric("beds"),
   baths: numeric("baths"),
   sqft: integer("sqft"),
-  lotSize: numeric("lot_size"),
+  lotAcres: numeric("lot_acres"),
   yearBuilt: integer("year_built"),
-  hoaFee: numeric("hoa_fee"),
+  hoaMonthly: numeric("hoa_monthly"),
+  taxesAnnual: numeric("taxes_annual"),
+  estMonthlyPayment: numeric("est_monthly_payment"),
+  daysOnMarket: integer("days_on_market"),
+  schoolRating: numeric("school_rating"),
+  commuteSalisburyMin: integer("commute_salisbury_min"),
+  commuteCharlotteMin: integer("commute_charlotte_min"),
+  accessNotes: text("access_notes"),
+  amenitiesNotes: text("amenities_notes"),
+  risksRedFlags: text("risks_red_flags"),
+  mustHaveIssue: text("must_have_issue").default("No"), // Yes|No|Maybe
   propertyType: text("property_type"),
   listingDescription: text("listing_description"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
@@ -40,27 +54,25 @@ export const properties = pgTable("properties", {
 
 export const propertyScores = pgTable("property_scores", {
   propertyId: uuid("property_id").primaryKey(),
-  priceScore: numeric("price_score"),
-  monthlyCostScore: numeric("monthly_cost_score"),
-  commuteScore: numeric("commute_score"),
-  schoolScore: numeric("school_score"),
-  walkabilityScore: numeric("walkability_score"),
-  toddlerFriendlyScore: numeric("toddler_friendly_score"),
-  communityScore: numeric("community_score"),
-  hoaScore: numeric("hoa_score"),
-  conditionScore: numeric("condition_score"),
-  resaleScore: numeric("resale_score"),
-  emotionalFitScore: numeric("emotional_fit_score"),
-  totalWeightedScore: numeric("total_weighted_score"),
+  // The seven 1–5 category ratings.
+  locationWalkability: smallint("location_walkability"),
+  communityKids: smallint("community_kids"),
+  layoutFamilyFit: smallint("layout_family_fit"),
+  schoolsChildcare: smallint("schools_childcare"),
+  commuteAccess: smallint("commute_access"),
+  financialFit: smallint("financial_fit"),
+  conditionRiskResale: smallint("condition_risk_resale"),
+  // Derived.
+  weightedScore: numeric("weighted_score"),
+  recommendation: text("recommendation"),
   computedAt: timestamp("computed_at", { withTimezone: true }).defaultNow(),
 });
 
-export const scoreOverrides = pgTable("score_overrides", {
+export const scoreNotes = pgTable("score_notes", {
   id: uuid("id").primaryKey().defaultRandom(),
   propertyId: uuid("property_id").notNull(),
-  scoreName: text("score_name").notNull(),
-  value: numeric("value"),
-  reason: text("reason"),
+  category: text("category").notNull(), // one of the 7 category keys
+  note: text("note"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
 
@@ -103,9 +115,10 @@ export const propertyNotes = pgTable("property_notes", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
 
-export const scoringWeights = pgTable("scoring_weights", {
+export const scoringConfig = pgTable("scoring_config", {
   id: integer("id").primaryKey().default(1),
   weights: jsonb("weights"),
+  inputs: jsonb("inputs"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
 });
 
@@ -115,3 +128,5 @@ export type PropertyScores = typeof propertyScores.$inferSelect;
 export type PropertyFeatures = typeof propertyFeatures.$inferSelect;
 export type HoaDetails = typeof hoaDetails.$inferSelect;
 export type PropertyNote = typeof propertyNotes.$inferSelect;
+export type ScoreNote = typeof scoreNotes.$inferSelect;
+export type ScoringConfig = typeof scoringConfig.$inferSelect;

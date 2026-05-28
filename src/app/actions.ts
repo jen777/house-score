@@ -9,12 +9,13 @@ import {
   properties,
   propertyFeatures,
   propertyNotes,
-  scoreOverrides,
   propertyScores,
+  scoreNotes,
 } from "@/db/schema";
 import { AUTH_COOKIE, verifyPassword, expectedToken } from "@/lib/auth";
 import { extractListingFeatures } from "@/lib/ai";
-import { recomputeProperty } from "@/lib/recompute";
+import { recomputeProperty, SCORE_COLUMN } from "@/lib/recompute";
+import { CATEGORIES } from "@/lib/scoring";
 
 // ---- Auth ----
 
@@ -42,9 +43,48 @@ export async function logoutAction() {
 
 // ---- Properties ----
 
-function numOrNull(v: FormDataEntryValue | null): string | null {
+function strOrNull(v: FormDataEntryValue | null): string | null {
   const s = String(v ?? "").trim();
   return s === "" ? null : s;
+}
+
+function intOrNull(v: FormDataEntryValue | null): number | null {
+  const s = String(v ?? "").trim();
+  if (s === "") return null;
+  const n = Number(s);
+  return Number.isNaN(n) ? null : Math.round(n);
+}
+
+// Fields shared by create + update (everything except address/status).
+function propertyFieldsFromForm(formData: FormData) {
+  return {
+    communityHoa: strOrNull(formData.get("communityHoa")),
+    cityArea: strOrNull(formData.get("cityArea")),
+    city: strOrNull(formData.get("city")),
+    state: strOrNull(formData.get("state")),
+    zip: strOrNull(formData.get("zip")),
+    listingUrl: strOrNull(formData.get("listingUrl")),
+    source: strOrNull(formData.get("source")),
+    mlsNumber: strOrNull(formData.get("mlsNumber")),
+    price: strOrNull(formData.get("price")),
+    beds: strOrNull(formData.get("beds")),
+    baths: strOrNull(formData.get("baths")),
+    sqft: intOrNull(formData.get("sqft")),
+    lotAcres: strOrNull(formData.get("lotAcres")),
+    yearBuilt: intOrNull(formData.get("yearBuilt")),
+    hoaMonthly: strOrNull(formData.get("hoaMonthly")),
+    taxesAnnual: strOrNull(formData.get("taxesAnnual")),
+    daysOnMarket: intOrNull(formData.get("daysOnMarket")),
+    schoolRating: strOrNull(formData.get("schoolRating")),
+    commuteSalisburyMin: intOrNull(formData.get("commuteSalisburyMin")),
+    commuteCharlotteMin: intOrNull(formData.get("commuteCharlotteMin")),
+    accessNotes: strOrNull(formData.get("accessNotes")),
+    amenitiesNotes: strOrNull(formData.get("amenitiesNotes")),
+    risksRedFlags: strOrNull(formData.get("risksRedFlags")),
+    mustHaveIssue: String(formData.get("mustHaveIssue") ?? "No"),
+    propertyType: strOrNull(formData.get("propertyType")),
+    listingDescription: strOrNull(formData.get("listingDescription")),
+  };
 }
 
 export async function createPropertyAction(formData: FormData) {
@@ -55,23 +95,8 @@ export async function createPropertyAction(formData: FormData) {
     .insert(properties)
     .values({
       address,
-      city: numOrNull(formData.get("city")),
-      state: numOrNull(formData.get("state")),
-      zip: numOrNull(formData.get("zip")),
-      listingUrl: numOrNull(formData.get("listingUrl")),
-      source: String(formData.get("source") ?? "manual"),
-      status: "new",
-      price: numOrNull(formData.get("price")),
-      beds: numOrNull(formData.get("beds")),
-      baths: numOrNull(formData.get("baths")),
-      sqft: formData.get("sqft") ? Number(formData.get("sqft")) : null,
-      lotSize: numOrNull(formData.get("lotSize")),
-      yearBuilt: formData.get("yearBuilt")
-        ? Number(formData.get("yearBuilt"))
-        : null,
-      hoaFee: numOrNull(formData.get("hoaFee")),
-      propertyType: numOrNull(formData.get("propertyType")),
-      listingDescription: numOrNull(formData.get("listingDescription")),
+      status: "New",
+      ...propertyFieldsFromForm(formData),
     })
     .returning({ id: properties.id });
 
@@ -86,21 +111,7 @@ export async function updatePropertyAction(formData: FormData) {
     .update(properties)
     .set({
       address: String(formData.get("address") ?? "").trim(),
-      city: numOrNull(formData.get("city")),
-      state: numOrNull(formData.get("state")),
-      zip: numOrNull(formData.get("zip")),
-      listingUrl: numOrNull(formData.get("listingUrl")),
-      price: numOrNull(formData.get("price")),
-      beds: numOrNull(formData.get("beds")),
-      baths: numOrNull(formData.get("baths")),
-      sqft: formData.get("sqft") ? Number(formData.get("sqft")) : null,
-      lotSize: numOrNull(formData.get("lotSize")),
-      yearBuilt: formData.get("yearBuilt")
-        ? Number(formData.get("yearBuilt"))
-        : null,
-      hoaFee: numOrNull(formData.get("hoaFee")),
-      propertyType: numOrNull(formData.get("propertyType")),
-      listingDescription: numOrNull(formData.get("listingDescription")),
+      ...propertyFieldsFromForm(formData),
       updatedAt: new Date(),
     })
     .where(eq(properties.id, id));
@@ -147,35 +158,25 @@ export async function extractAction(formData: FormData) {
       propertyType: prop!.propertyType ?? undefined,
     });
 
+    const values = {
+      familyFriendly: data.family_friendly_features,
+      walkingFeatures: data.walking_features,
+      workFromHome: data.work_from_home,
+      renovationRisk: data.renovation_risk,
+      communityAmenities: data.community_amenities,
+      concerns: data.concerns,
+      emotionalFitSummary: data.emotional_fit_summary,
+      extraction: data,
+      model,
+      extractedAt: new Date(),
+    };
+
     await db
       .insert(propertyFeatures)
-      .values({
-        propertyId: id,
-        familyFriendly: data.family_friendly_features,
-        walkingFeatures: data.walking_features,
-        workFromHome: data.work_from_home,
-        renovationRisk: data.renovation_risk,
-        communityAmenities: data.community_amenities,
-        concerns: data.concerns,
-        emotionalFitSummary: data.emotional_fit_summary,
-        extraction: data,
-        model,
-        extractedAt: new Date(),
-      })
+      .values({ propertyId: id, ...values })
       .onConflictDoUpdate({
         target: propertyFeatures.propertyId,
-        set: {
-          familyFriendly: data.family_friendly_features,
-          walkingFeatures: data.walking_features,
-          workFromHome: data.work_from_home,
-          renovationRisk: data.renovation_risk,
-          communityAmenities: data.community_amenities,
-          concerns: data.concerns,
-          emotionalFitSummary: data.emotional_fit_summary,
-          extraction: data,
-          model,
-          extractedAt: new Date(),
-        },
+        set: values,
       });
 
     await recomputeProperty(id);
@@ -186,54 +187,67 @@ export async function extractAction(formData: FormData) {
   }
 }
 
-// ---- Personal-fit scores & overrides ----
+// ---- Category ratings (the seven 1–5 scores) ----
 
-export async function savePersonalScoresAction(formData: FormData) {
+function ratingOrNull(v: FormDataEntryValue | null): number | null {
+  const s = String(v ?? "").trim();
+  if (s === "") return null;
+  const n = Math.round(Number(s));
+  if (Number.isNaN(n)) return null;
+  return Math.max(1, Math.min(5, n));
+}
+
+export async function saveScoresAction(formData: FormData) {
   const id = String(formData.get("id"));
-  const fields = {
-    walkabilityScore: numOrNull(formData.get("walkability")),
-    toddlerFriendlyScore: numOrNull(formData.get("toddler_friendly")),
-    communityScore: numOrNull(formData.get("community")),
-    emotionalFitScore: numOrNull(formData.get("emotional_fit")),
-  };
+
+  // 1. The seven category ratings.
+  const ratingFields: Record<string, number | null> = {};
+  for (const key of CATEGORIES) {
+    ratingFields[SCORE_COLUMN[key] as string] = ratingOrNull(
+      formData.get(key),
+    );
+  }
   await db
     .insert(propertyScores)
-    .values({ propertyId: id, ...fields })
+    .values({ propertyId: id, ...ratingFields })
     .onConflictDoUpdate({
       target: propertyScores.propertyId,
-      set: fields,
+      set: ratingFields,
     });
+
+  // 2. The must-have-issue gate lives on the property.
+  const mustHaveIssue = String(formData.get("mustHaveIssue") ?? "No");
+  await db
+    .update(properties)
+    .set({ mustHaveIssue, updatedAt: new Date() })
+    .where(eq(properties.id, id));
+
+  // 3. Optional per-category rationale notes.
+  for (const key of CATEGORIES) {
+    const note = strOrNull(formData.get(`note_${key}`));
+    if (note == null) {
+      await db
+        .delete(scoreNotes)
+        .where(
+          and(
+            eq(scoreNotes.propertyId, id),
+            eq(scoreNotes.category, key),
+          ),
+        );
+    } else {
+      await db
+        .insert(scoreNotes)
+        .values({ propertyId: id, category: key, note })
+        .onConflictDoUpdate({
+          target: [scoreNotes.propertyId, scoreNotes.category],
+          set: { note },
+        });
+    }
+  }
+
   await recomputeProperty(id);
   revalidatePath(`/properties/${id}`);
   revalidatePath("/");
-}
-
-export async function setOverrideAction(formData: FormData) {
-  const id = String(formData.get("id"));
-  const scoreName = String(formData.get("scoreName"));
-  const value = numOrNull(formData.get("value"));
-  const reason = numOrNull(formData.get("reason"));
-
-  if (value == null) {
-    await db
-      .delete(scoreOverrides)
-      .where(
-        and(
-          eq(scoreOverrides.propertyId, id),
-          eq(scoreOverrides.scoreName, scoreName),
-        ),
-      );
-  } else {
-    await db
-      .insert(scoreOverrides)
-      .values({ propertyId: id, scoreName, value, reason })
-      .onConflictDoUpdate({
-        target: [scoreOverrides.propertyId, scoreOverrides.scoreName],
-        set: { value, reason },
-      });
-  }
-  await recomputeProperty(id);
-  revalidatePath(`/properties/${id}`);
 }
 
 // ---- Notes ----

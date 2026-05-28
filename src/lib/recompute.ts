@@ -1,42 +1,32 @@
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
+import { properties, propertyScores, scoringConfig } from "@/db/schema";
 import {
-  properties,
-  propertyScores,
-  propertyFeatures,
-  scoreOverrides,
-  scoringWeights,
-} from "@/db/schema";
-import {
-  computeObjectiveScores,
-  totalWeightedScore,
+  weightedScore,
+  recommendation,
+  estimatedMonthly,
   DEFAULT_WEIGHTS,
-  type Scores,
-  type ScoreName,
+  DEFAULT_INPUTS,
+  CATEGORIES,
   type Weights,
+  type ScoringInputs,
+  type Ratings,
+  type CategoryKey,
 } from "./scoring";
 
-// Map ScoreName -> property_scores column key (drizzle field name).
-const COLUMN: Record<ScoreName, keyof typeof propertyScores.$inferInsert> = {
-  price: "priceScore",
-  monthly_cost: "monthlyCostScore",
-  commute: "commuteScore",
-  school: "schoolScore",
-  condition: "conditionScore",
-  resale: "resaleScore",
-  hoa: "hoaScore",
-  walkability: "walkabilityScore",
-  toddler_friendly: "toddlerFriendlyScore",
-  community: "communityScore",
-  emotional_fit: "emotionalFitScore",
+// Map a category key -> property_scores column (drizzle field name).
+export const SCORE_COLUMN: Record<
+  CategoryKey,
+  keyof typeof propertyScores.$inferInsert
+> = {
+  location_walkability: "locationWalkability",
+  community_kids: "communityKids",
+  layout_family_fit: "layoutFamilyFit",
+  schools_childcare: "schoolsChildcare",
+  commute_access: "commuteAccess",
+  financial_fit: "financialFit",
+  condition_risk_resale: "conditionRiskResale",
 };
-
-const PERSONAL: ScoreName[] = [
-  "walkability",
-  "toddler_friendly",
-  "community",
-  "emotional_fit",
-];
 
 function toNum(v: unknown): number | null {
   if (v == null) return null;
@@ -44,11 +34,27 @@ function toNum(v: unknown): number | null {
   return Number.isNaN(n) ? null : n;
 }
 
+/** Load the owner's scoring config (weights + inputs), falling back to defaults. */
+export async function getScoringConfig(): Promise<{
+  weights: Weights;
+  inputs: ScoringInputs;
+}> {
+  const [row] = await db
+    .select()
+    .from(scoringConfig)
+    .where(eq(scoringConfig.id, 1));
+  return {
+    weights: { ...DEFAULT_WEIGHTS, ...((row?.weights as Weights) ?? {}) },
+    inputs: { ...DEFAULT_INPUTS, ...((row?.inputs as ScoringInputs) ?? {}) },
+  };
+}
+
 /**
- * Recompute a property's scores and persist them.
- * - Objective scores are derived from property data + AI renovation-risk flags.
- * - Personal-fit scores are preserved from the existing row (user-entered).
- * - Any explicit override wins over both.
+ * Recompute a property's derived values and persist them:
+ *  - Estimated Monthly Payment on the property (from price/HOA/taxes + inputs).
+ *  - Weighted Score (out of 100) + Recommendation on property_scores, from the
+ *    seven 1–5 category ratings and the must-have-issue gate.
+ * The user-entered category ratings are preserved.
  */
 export async function recomputeProperty(propertyId: string): Promise<void> {
   const [prop] = await db
@@ -57,69 +63,50 @@ export async function recomputeProperty(propertyId: string): Promise<void> {
     .where(eq(properties.id, propertyId));
   if (!prop) return;
 
-  const [features] = await db
-    .select()
-    .from(propertyFeatures)
-    .where(eq(propertyFeatures.propertyId, propertyId));
+  const { weights, inputs } = await getScoringConfig();
 
+  // 1. Estimated monthly payment lives on the property and is always derivable.
+  const est = estimatedMonthly(
+    {
+      price: toNum(prop.price),
+      hoaMonthly: toNum(prop.hoaMonthly),
+      taxesAnnual: toNum(prop.taxesAnnual),
+    },
+    inputs,
+  );
+  await db
+    .update(properties)
+    .set({ estMonthlyPayment: est != null ? String(est) : null })
+    .where(eq(properties.id, propertyId));
+
+  // 2. Derive weighted score + recommendation from existing category ratings.
   const [existing] = await db
     .select()
     .from(propertyScores)
     .where(eq(propertyScores.propertyId, propertyId));
 
-  const overrides = await db
-    .select()
-    .from(scoreOverrides)
-    .where(eq(scoreOverrides.propertyId, propertyId));
-
-  const [weightsRow] = await db
-    .select()
-    .from(scoringWeights)
-    .where(eq(scoringWeights.id, 1));
-  const weights = (weightsRow?.weights as Weights) ?? DEFAULT_WEIGHTS;
-
-  const renovationRiskCount = Array.isArray(features?.renovationRisk)
-    ? (features!.renovationRisk as unknown[]).length
-    : 0;
-
-  // 1. Objective scores from data.
-  const scores: Scores = computeObjectiveScores({
-    price: toNum(prop.price),
-    beds: toNum(prop.beds),
-    sqft: prop.sqft,
-    yearBuilt: prop.yearBuilt,
-    hoaFee: toNum(prop.hoaFee),
-    renovationRiskCount,
-  });
-
-  // 2. Preserve existing personal-fit scores (user-entered).
-  for (const name of PERSONAL) {
-    const col = COLUMN[name];
-    const v = toNum(existing?.[col as keyof typeof existing]);
-    if (v != null) scores[name] = v;
+  const ratings: Ratings = {};
+  for (const key of CATEGORIES) {
+    ratings[key] = toNum(existing?.[SCORE_COLUMN[key] as keyof typeof existing]);
   }
 
-  // 3. Apply overrides (highest precedence).
-  for (const o of overrides) {
-    const name = o.scoreName as ScoreName;
-    if (name in COLUMN) scores[name] = toNum(o.value);
-  }
-
-  const total = totalWeightedScore(scores, weights);
-
-  const row: typeof propertyScores.$inferInsert = {
-    propertyId,
-    totalWeightedScore: total != null ? String(total) : null,
-    computedAt: new Date(),
-  };
-  for (const name of Object.keys(COLUMN) as ScoreName[]) {
-    const v = scores[name];
-    (row as Record<string, unknown>)[COLUMN[name]] =
-      v != null ? String(v) : null;
-  }
+  const score = weightedScore(ratings, weights);
+  const rec = recommendation(score, prop.mustHaveIssue === "Yes");
 
   await db
     .insert(propertyScores)
-    .values(row)
-    .onConflictDoUpdate({ target: propertyScores.propertyId, set: row });
+    .values({
+      propertyId,
+      weightedScore: score != null ? String(score) : null,
+      recommendation: rec,
+      computedAt: new Date(),
+    })
+    .onConflictDoUpdate({
+      target: propertyScores.propertyId,
+      set: {
+        weightedScore: score != null ? String(score) : null,
+        recommendation: rec,
+        computedAt: new Date(),
+      },
+    });
 }

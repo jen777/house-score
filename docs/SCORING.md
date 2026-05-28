@@ -5,9 +5,10 @@
 > Rubric*, *House Tracker*, *Dashboard*). The formulas below are the exact
 > spreadsheet logic, reproduced so the app behaves identically.
 >
-> ⚠️ **Implementation gap:** the current Phase 1 code in `src/lib/scoring.ts`
-> implements an earlier, different draft (11 dimensions, 0–100 inputs). It does
-> **not** yet match this spec. See "Aligning the code" at the end.
+> ✅ **Implemented:** the Phase 1 code matches this spec — `src/lib/scoring.ts`
+> (`weightedScore`, `recommendation`, `estimatedMonthly`, `DEFAULT_WEIGHTS`,
+> `DEFAULT_INPUTS`), the `property_scores` / `scoring_config` schema, and the
+> rating/compare UI. See "How the code maps to this spec" at the end.
 
 ## Overview
 
@@ -209,21 +210,21 @@ The *Dashboard* sheet derives, across all tracked houses:
 - **Top 10** — houses ranked by Weighted Score (descending), showing address,
   community/HOA, city/area, price, est monthly, score, recommendation.
 
-## Aligning the code (follow-up)
+## How the code maps to this spec
 
-To make `src/lib/scoring.ts` match this spec, the engine should:
+The Phase 1 implementation mirrors the formulas above:
 
-1. Replace the 11-dimension 0–100 model with the **7 categories** above, each an
-   integer **1–5** input.
-2. Compute `weightedScore = sum(rating×weight)/sum(weight) × 20`, rounded to 1dp,
-   treating blanks as 0 and returning blank only when nothing is rated.
-3. Add `recommendation(weightedScore, mustHaveIssue)` with the bands above
-   (including the must-have-issue hard gate).
-4. Add `estimatedMonthly(...)` implementing the amortization + tax + insurance +
-   HOA formula, and store it on the property.
-5. Move the financial/commute parameters into the inputs config (seed with the
-   defaults in the table above) instead of `DEFAULT_CONFIG`.
+| Spec element | Code |
+| --- | --- |
+| 7 categories, keys, weights | `CATEGORIES`, `CATEGORY_LABEL`, `DEFAULT_WEIGHTS` in `src/lib/scoring.ts` |
+| Weighted Score (blanks = 0) | `weightedScore(ratings, weights)` |
+| Recommendation bands + gate | `recommendation(score, mustHaveIssue)` |
+| Estimated Monthly Payment | `estimatedMonthly(property, inputs)` |
+| Inputs defaults | `DEFAULT_INPUTS` |
+| Per-owner overrides | `scoring_config` row (`weights` + `inputs` jsonb), loaded by `getScoringConfig()` |
+| Persistence + recompute | `recomputeProperty()` in `src/lib/recompute.ts` writes `est_monthly_payment` on the property and `weighted_score` / `recommendation` on `property_scores` |
 
-The data model changes needed to support this are described in
+The ratings are entered (or AI-proposed, user-confirmed) on the property detail
+page; saving recomputes the derived values. The data model is described in
 `DATA_MODEL.md` (7 category ratings, `must_have_issue`, `est_monthly_payment`,
 `taxes_annual`, two commute fields, recommendation band).

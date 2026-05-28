@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createPropertyAction } from "../../actions";
+import { SOURCES } from "@/lib/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -35,6 +36,20 @@ export default async function NewPropertyPage({
             </label>
             <input id="address" name="address" className="input" required />
           </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="label">Community / HOA</label>
+              <input name="communityHoa" className="input" />
+            </div>
+            <div>
+              <label className="label">City / Area</label>
+              <input
+                name="cityArea"
+                className="input"
+                placeholder="South Charlotte / Ballantyne"
+              />
+            </div>
+          </div>
           <div className="grid grid-cols-3 gap-3">
             <div>
               <label className="label">City</label>
@@ -60,12 +75,12 @@ export default async function NewPropertyPage({
             </div>
             <div>
               <label className="label">Source</label>
-              <select name="source" className="input" defaultValue="redfin">
-                <option value="redfin">Redfin</option>
-                <option value="zillow">Zillow</option>
-                <option value="realtor">Realtor.com</option>
-                <option value="manual">Manual</option>
-                <option value="other">Other</option>
+              <select name="source" className="input" defaultValue="Redfin">
+                {SOURCES.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
               </select>
             </div>
           </div>
@@ -89,16 +104,54 @@ export default async function NewPropertyPage({
             <input name="sqft" type="number" className="input" />
           </div>
           <div>
-            <label className="label">Lot size</label>
-            <input name="lotSize" className="input" placeholder="0.25 ac" />
+            <label className="label">Lot (acres)</label>
+            <input
+              name="lotAcres"
+              type="number"
+              step="0.01"
+              className="input"
+            />
           </div>
           <div>
             <label className="label">Year built</label>
             <input name="yearBuilt" type="number" className="input" />
           </div>
           <div>
-            <label className="label">HOA fee ($/mo)</label>
-            <input name="hoaFee" type="number" className="input" />
+            <label className="label">HOA ($/mo)</label>
+            <input name="hoaMonthly" type="number" className="input" />
+          </div>
+          <div>
+            <label className="label">Taxes ($/yr)</label>
+            <input name="taxesAnnual" type="number" className="input" />
+          </div>
+          <div>
+            <label className="label">Days on market</label>
+            <input name="daysOnMarket" type="number" className="input" />
+          </div>
+          <div>
+            <label className="label">School rating (0–10)</label>
+            <input
+              name="schoolRating"
+              type="number"
+              step="0.1"
+              className="input"
+            />
+          </div>
+          <div>
+            <label className="label">Commute → Salisbury (min)</label>
+            <input
+              name="commuteSalisburyMin"
+              type="number"
+              className="input"
+            />
+          </div>
+          <div>
+            <label className="label">Commute → Charlotte (min)</label>
+            <input
+              name="commuteCharlotteMin"
+              type="number"
+              className="input"
+            />
           </div>
           <div>
             <label className="label">Property type</label>
@@ -111,6 +164,29 @@ export default async function NewPropertyPage({
               <option value="townhome">Townhome</option>
               <option value="condo">Condo</option>
             </select>
+          </div>
+          <div>
+            <label className="label">Must-have issue?</label>
+            <select name="mustHaveIssue" className="input" defaultValue="No">
+              <option value="No">No</option>
+              <option value="Maybe">Maybe</option>
+              <option value="Yes">Yes (forces Pass)</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="card space-y-3">
+          <div>
+            <label className="label">Access / transit notes</label>
+            <input name="accessNotes" className="input" />
+          </div>
+          <div>
+            <label className="label">Amenities notes</label>
+            <input name="amenitiesNotes" className="input" />
+          </div>
+          <div>
+            <label className="label">Risks / red flags</label>
+            <input name="risksRedFlags" className="input" />
           </div>
         </div>
 

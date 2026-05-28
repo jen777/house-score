@@ -2,42 +2,19 @@ import Link from "next/link";
 import { eq, inArray } from "drizzle-orm";
 import { db } from "@/db";
 import { properties, propertyScores } from "@/db/schema";
+import { CATEGORIES, CATEGORY_LABEL, type CategoryKey } from "@/lib/scoring";
+import { SCORE_COLUMN } from "@/lib/recompute";
 import {
-  OBJECTIVE_SCORES,
-  PERSONAL_SCORES,
-  type ScoreName,
-} from "@/lib/scoring";
-import { scoreClass, fmtMoney, fmtNum, fmtScore } from "@/lib/ui";
+  scoreClass,
+  recClass,
+  ratingClass,
+  fmtMoney,
+  fmtNum,
+  fmtScore,
+  fmtRating,
+} from "@/lib/ui";
 
 export const dynamic = "force-dynamic";
-
-const SCORE_LABEL: Record<ScoreName, string> = {
-  price: "Price fit",
-  monthly_cost: "Monthly cost",
-  commute: "Commute",
-  school: "Schools",
-  condition: "Condition",
-  resale: "Resale",
-  hoa: "HOA",
-  walkability: "Walkability",
-  toddler_friendly: "Toddler-friendly",
-  community: "Community",
-  emotional_fit: "Emotional fit",
-};
-
-const COL: Record<ScoreName, keyof typeof propertyScores.$inferSelect> = {
-  price: "priceScore",
-  monthly_cost: "monthlyCostScore",
-  commute: "commuteScore",
-  school: "schoolScore",
-  condition: "conditionScore",
-  resale: "resaleScore",
-  hoa: "hoaScore",
-  walkability: "walkabilityScore",
-  toddler_friendly: "toddlerFriendlyScore",
-  community: "communityScore",
-  emotional_fit: "emotionalFitScore",
-};
 
 export default async function ComparePage({
   searchParams,
@@ -49,13 +26,8 @@ export default async function ComparePage({
   const fromId = Array.isArray(sp.id) ? sp.id : sp.id ? [sp.id] : [];
   const fromIds = (sp.ids ?? "").split(",").filter(Boolean);
   const all = await db
-    .select({
-      id: properties.id,
-      address: properties.address,
-      total: propertyScores.totalWeightedScore,
-    })
-    .from(properties)
-    .leftJoin(propertyScores, eq(properties.id, propertyScores.propertyId));
+    .select({ id: properties.id, address: properties.address })
+    .from(properties);
 
   const selectedIds = [...new Set([...fromId, ...fromIds])].slice(0, 4);
 
@@ -114,12 +86,12 @@ export default async function ComparePage({
             </thead>
             <tbody className="divide-y divide-slate-100">
               <tr className="bg-slate-50/50 font-semibold">
-                <td className="px-4 py-2">Total score</td>
+                <td className="px-4 py-2">Weighted score</td>
                 {selected.map((s) => {
                   const v =
-                    s.property_scores?.totalWeightedScore == null
+                    s.property_scores?.weightedScore == null
                       ? null
-                      : Number(s.property_scores.totalWeightedScore);
+                      : Number(s.property_scores.weightedScore);
                   return (
                     <td key={s.properties.id} className="px-4 py-2">
                       <span className={`badge ${scoreClass(v)}`}>
@@ -129,24 +101,46 @@ export default async function ComparePage({
                   );
                 })}
               </tr>
+              <tr>
+                <td className="px-4 py-2 text-slate-600">Recommendation</td>
+                {selected.map((s) => (
+                  <td key={s.properties.id} className="px-4 py-2">
+                    <span
+                      className={`badge ${recClass(
+                        s.property_scores?.recommendation,
+                      )}`}
+                    >
+                      {s.property_scores?.recommendation ?? "Needs data"}
+                    </span>
+                  </td>
+                ))}
+              </tr>
               <Row label="Price" cells={selected.map((s) => fmtMoney(s.properties.price))} />
+              <Row label="Est. monthly" cells={selected.map((s) => fmtMoney(s.properties.estMonthlyPayment))} />
               <Row label="Beds / Baths" cells={selected.map((s) => `${fmtNum(s.properties.beds)} / ${fmtNum(s.properties.baths)}`)} />
               <Row label="Sq ft" cells={selected.map((s) => fmtNum(s.properties.sqft))} />
               <Row label="Year built" cells={selected.map((s) => fmtNum(s.properties.yearBuilt))} />
-              <Row label="HOA/mo" cells={selected.map((s) => fmtMoney(s.properties.hoaFee))} />
+              <Row label="HOA/mo" cells={selected.map((s) => fmtMoney(s.properties.hoaMonthly))} />
+              <Row label="→ Salisbury" cells={selected.map((s) => fmtNum(s.properties.commuteSalisburyMin, " min"))} />
+              <Row label="→ Charlotte" cells={selected.map((s) => fmtNum(s.properties.commuteCharlotteMin, " min"))} />
 
-              {[...OBJECTIVE_SCORES, ...PERSONAL_SCORES].map((name) => (
-                <tr key={name}>
+              {CATEGORIES.map((key: CategoryKey) => (
+                <tr key={key}>
                   <td className="px-4 py-2 text-slate-600">
-                    {SCORE_LABEL[name]}
+                    {CATEGORY_LABEL[key]}
                   </td>
                   {selected.map((s) => {
-                    const raw = s.property_scores?.[COL[name]];
+                    const raw =
+                      s.property_scores?.[
+                        SCORE_COLUMN[key] as keyof NonNullable<
+                          typeof s.property_scores
+                        >
+                      ];
                     const v = raw == null ? null : Number(raw);
                     return (
                       <td key={s.properties.id} className="px-4 py-2">
-                        <span className={`badge ${scoreClass(v)}`}>
-                          {fmtScore(v)}
+                        <span className={`badge ${ratingClass(v)}`}>
+                          {fmtRating(v)}
                         </span>
                       </td>
                     );
