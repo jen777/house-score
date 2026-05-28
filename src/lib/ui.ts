@@ -73,6 +73,29 @@ export function ratingClass(r: number | null | undefined): string {
   return "bg-red-100 text-red-700";
 }
 
+// Provenance confidence badge color (Phase 2 enrichment).
+export function confidenceClass(c: string | null | undefined): string {
+  switch (c) {
+    case "high":
+      return "bg-green-100 text-green-700";
+    case "medium":
+      return "bg-amber-100 text-amber-700";
+    case "low":
+      return "bg-red-100 text-red-700";
+    default:
+      return "bg-slate-100 text-slate-500"; // unknown
+  }
+}
+
+// Human label for a provenance source key.
+export const SOURCE_LABEL: Record<string, string> = {
+  rentcast: "RentCast",
+  mls: "MLS",
+  listing: "Listing",
+  manual: "Manual",
+  county_gis: "County GIS",
+};
+
 export function fmtMoney(v: unknown): string {
   if (v == null || v === "") return "—";
   const n = Number(v);

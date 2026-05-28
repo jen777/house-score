@@ -10,11 +10,14 @@ import {
   propertyFeatures,
   propertyNotes,
   propertyScores,
+  propertyEnrichment,
+  propertyFieldProvenance,
   scoreNotes,
 } from "@/db/schema";
 import { AUTH_COOKIE, verifyPassword, expectedToken } from "@/lib/auth";
 import { extractListingFeatures } from "@/lib/ai";
 import { geocode } from "@/lib/geocode";
+import { enrichByAddress } from "@/lib/rentcast";
 import { recomputeProperty, SCORE_COLUMN } from "@/lib/recompute";
 import { CATEGORIES } from "@/lib/scoring";
 
@@ -235,6 +238,128 @@ export async function extractAction(formData: FormData) {
     revalidatePath(`/properties/${id}`);
   } catch (e) {
     const msg = e instanceof Error ? e.message : "extraction failed";
+    redirect(`/properties/${id}?error=${encodeURIComponent(msg)}`);
+  }
+}
+
+// ---- RentCast enrichment (Phase 2) ----
+
+const numStr = (v: number | null): string | null =>
+  v == null ? null : String(v);
+
+/**
+ * Enrich a property from RentCast by address. Overwrites record fields wherever
+ * RentCast has data (per the owner's chosen "overwrite all" behavior), stores
+ * the valuation / rent estimate / comparables in property_enrichment, and writes
+ * a property_field_provenance row (source + confidence) for every field set.
+ */
+export async function enrichPropertyAction(formData: FormData) {
+  const id = String(formData.get("id"));
+  const [prop] = await db
+    .select()
+    .from(properties)
+    .where(eq(properties.id, id));
+  if (!prop) redirect("/");
+  if (!prop!.address?.trim()) {
+    redirect(`/properties/${id}?error=no-address`);
+  }
+
+  try {
+    const e = await enrichByAddress(prop!.address);
+    const r = e.record;
+
+    // 1. Overwrite property record fields where RentCast supplied a value.
+    //    (We never touch `price` — that's the user's list price, not an AVM.)
+    const updates: Record<string, unknown> = {};
+    const prov: { fieldName: string; confidence: string }[] = [];
+    const set = (
+      col: string,
+      field: string,
+      value: unknown,
+      confidence = "high",
+    ) => {
+      if (value == null) return;
+      updates[col] = value;
+      prov.push({ fieldName: field, confidence });
+    };
+
+    set("beds", "beds", numStr(r.beds));
+    set("baths", "baths", numStr(r.baths));
+    set("sqft", "sqft", r.sqft);
+    set("lotAcres", "lot_acres", numStr(r.lotAcres));
+    set("yearBuilt", "year_built", r.yearBuilt);
+    set("propertyType", "property_type", r.propertyType);
+    set("hoaMonthly", "hoa_monthly", numStr(r.hoaMonthly));
+    set("taxesAnnual", "taxes_annual", numStr(r.taxesAnnual));
+    set("city", "city", r.city);
+    set("state", "state", r.state);
+    set("zip", "zip", r.zip);
+    set("latitude", "latitude", r.latitude);
+    set("longitude", "longitude", r.longitude);
+
+    if (Object.keys(updates).length > 0) {
+      updates.updatedAt = new Date();
+      await db.update(properties).set(updates).where(eq(properties.id, id));
+    }
+
+    // The valuation is an estimate, so its provenance gets medium confidence.
+    if (e.valuation.value != null) {
+      prov.push({ fieldName: "value_estimate", confidence: "medium" });
+    }
+
+    // 2. Cache the valuation / rent / comparables + raw payload.
+    const enrichVals = {
+      source: "rentcast",
+      valueEstimate: numStr(e.valuation.value),
+      valueLow: numStr(e.valuation.valueLow),
+      valueHigh: numStr(e.valuation.valueHigh),
+      rentEstimate: numStr(e.rent.rent),
+      rentLow: numStr(e.rent.rentLow),
+      rentHigh: numStr(e.rent.rentHigh),
+      lastSalePrice: numStr(r.lastSalePrice),
+      lastSaleDate: r.lastSaleDate,
+      comparables: e.comparables,
+      raw: e.raw,
+      fetchedAt: new Date(),
+    };
+    await db
+      .insert(propertyEnrichment)
+      .values({ propertyId: id, ...enrichVals })
+      .onConflictDoUpdate({
+        target: propertyEnrichment.propertyId,
+        set: enrichVals,
+      });
+
+    // 3. Provenance: one upserted row per field (source + confidence).
+    for (const p of prov) {
+      await db
+        .insert(propertyFieldProvenance)
+        .values({
+          propertyId: id,
+          fieldName: p.fieldName,
+          source: "rentcast",
+          confidence: p.confidence,
+          capturedAt: new Date(),
+        })
+        .onConflictDoUpdate({
+          target: [
+            propertyFieldProvenance.propertyId,
+            propertyFieldProvenance.fieldName,
+          ],
+          set: {
+            source: "rentcast",
+            confidence: p.confidence,
+            capturedAt: new Date(),
+          },
+        });
+    }
+
+    // 4. Est. monthly depends on price/HOA/taxes, which may have changed.
+    await recomputeProperty(id);
+    revalidatePath(`/properties/${id}`);
+    revalidatePath("/");
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "enrichment failed";
     redirect(`/properties/${id}?error=${encodeURIComponent(msg)}`);
   }
 }

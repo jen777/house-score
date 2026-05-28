@@ -115,6 +115,35 @@ export const propertyNotes = pgTable("property_notes", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
 
+// Phase 2: where each notable field came from + how confident we are. Avoids a
+// _source / _confidence column per field on `properties`. See docs/DATA_MODEL.md.
+export const propertyFieldProvenance = pgTable("property_field_provenance", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  propertyId: uuid("property_id").notNull(),
+  fieldName: text("field_name").notNull(), // e.g. 'sqft', 'taxes_annual'
+  source: text("source").notNull(), // rentcast | mls | listing | manual | county_gis
+  confidence: text("confidence").default("unknown"), // high|medium|low|unknown
+  capturedAt: timestamp("captured_at", { withTimezone: true }).defaultNow(),
+});
+
+// Phase 2: cached property-data API response (valuation, rent, comps + raw).
+// One row per property; refreshed on demand, not on every page load.
+export const propertyEnrichment = pgTable("property_enrichment", {
+  propertyId: uuid("property_id").primaryKey(),
+  source: text("source").default("rentcast"),
+  valueEstimate: numeric("value_estimate"),
+  valueLow: numeric("value_low"),
+  valueHigh: numeric("value_high"),
+  rentEstimate: numeric("rent_estimate"),
+  rentLow: numeric("rent_low"),
+  rentHigh: numeric("rent_high"),
+  lastSalePrice: numeric("last_sale_price"),
+  lastSaleDate: text("last_sale_date"),
+  comparables: jsonb("comparables"),
+  raw: jsonb("raw"),
+  fetchedAt: timestamp("fetched_at", { withTimezone: true }).defaultNow(),
+});
+
 export const scoringConfig = pgTable("scoring_config", {
   id: integer("id").primaryKey().default(1),
   weights: jsonb("weights"),
@@ -130,3 +159,6 @@ export type HoaDetails = typeof hoaDetails.$inferSelect;
 export type PropertyNote = typeof propertyNotes.$inferSelect;
 export type ScoreNote = typeof scoreNotes.$inferSelect;
 export type ScoringConfig = typeof scoringConfig.$inferSelect;
+export type PropertyFieldProvenance =
+  typeof propertyFieldProvenance.$inferSelect;
+export type PropertyEnrichment = typeof propertyEnrichment.$inferSelect;

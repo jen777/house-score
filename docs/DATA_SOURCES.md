@@ -35,15 +35,22 @@ and public records.
   API** standard (the modern replacement for legacy RETS). Requires a
   member/subscriber relationship and a data-vendor agreement.
 
-## RentCast integration notes (Phase 2)
+## RentCast integration notes (Phase 2 — implemented)
 
-- Lookup keys: address (primary), lat/long.
-- Pull: property record (beds/baths/sqft/lot/year/type), last sale, tax estimate,
-  value & rent estimates, comparables, active-listing status, market trends.
-- Map each returned field into `properties` and write a
-  `property_field_provenance` row with `source = 'rentcast'` and an appropriate
-  confidence.
-- Cache responses; don't re-call on every page load.
+- Lookup key: address (primary). `src/lib/rentcast.ts` calls `/properties`,
+  `/avm/value`, and `/avm/rent/long-term`; the AVM/rent calls are optional and a
+  404 there is tolerated (the property record alone is still kept).
+- Pulled: property record (beds/baths/sqft/lot/year/type/HOA/tax), last sale,
+  value & rent estimates, comparables. (Active-listing status / market trends
+  are a later add.)
+- Each returned record field is mapped onto `properties` and gets a
+  `property_field_provenance` row (`source = 'rentcast'`; record fields = `high`,
+  AVM value = `medium`). Estimates/comps + the raw payload are cached in
+  `property_enrichment`.
+- Responses are cached in `property_enrichment` and only refreshed on the
+  explicit "Enrich from RentCast" action — never on page load.
+- `RENTCAST_API_KEY` is server-side only; with no key the enrich action is
+  disabled.
 
 ## HOA data — expect partial automation
 

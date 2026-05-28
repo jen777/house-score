@@ -7,6 +7,8 @@ import {
   propertyScores,
   propertyFeatures,
   propertyNotes,
+  propertyEnrichment,
+  propertyFieldProvenance,
   scoreNotes,
 } from "@/db/schema";
 import {
@@ -15,6 +17,7 @@ import {
   type CategoryKey,
 } from "@/lib/scoring";
 import { SCORE_COLUMN } from "@/lib/recompute";
+import { rentcastConfigured } from "@/lib/rentcast";
 import {
   STATUSES,
   STATUS_LABEL,
@@ -22,6 +25,8 @@ import {
   scoreClass,
   recClass,
   ratingClass,
+  confidenceClass,
+  SOURCE_LABEL,
   fmtMoney,
   fmtNum,
   fmtScore,
@@ -32,6 +37,7 @@ import {
   deletePropertyAction,
   updateStatusAction,
   extractAction,
+  enrichPropertyAction,
   saveScoresAction,
   addNoteAction,
 } from "../../actions";
@@ -75,8 +81,30 @@ export default async function PropertyPage({
     .from(propertyNotes)
     .where(eq(propertyNotes.propertyId, id))
     .orderBy(desc(propertyNotes.createdAt));
+  const [enrichment] = await db
+    .select()
+    .from(propertyEnrichment)
+    .where(eq(propertyEnrichment.propertyId, id));
+  const provRows = await db
+    .select()
+    .from(propertyFieldProvenance)
+    .where(eq(propertyFieldProvenance.propertyId, id));
 
   const noteMap = new Map(catNotes.map((n) => [n.category, n.note ?? ""]));
+  const provMap = new Map(
+    provRows.map((p) => [p.fieldName, { source: p.source, confidence: p.confidence }]),
+  );
+  const enrichComps = Array.isArray(enrichment?.comparables)
+    ? (enrichment!.comparables as Array<{
+        address: string | null;
+        price: number | null;
+        sqft: number | null;
+        beds: number | null;
+        baths: number | null;
+        distanceMi: number | null;
+        daysOld: number | null;
+      }>)
+    : [];
   const ratingOf = (key: CategoryKey): number | null => {
     const raw = scores?.[SCORE_COLUMN[key] as keyof typeof scores];
     return raw == null ? null : Number(raw);
@@ -247,22 +275,135 @@ export default async function PropertyPage({
         )}
       </section>
 
+      {/* Enrichment (RentCast) */}
+      <section className="card">
+        <div className="mb-1 flex items-center justify-between">
+          <h2 className="text-lg font-semibold">Property data (RentCast)</h2>
+          <form action={enrichPropertyAction}>
+            <input type="hidden" name="id" value={prop.id} />
+            <button className="btn" disabled={!rentcastConfigured()}>
+              {enrichment ? "Refresh from RentCast" : "Enrich from RentCast"}
+            </button>
+          </form>
+        </div>
+        <p className="mb-3 text-xs text-slate-400">
+          Looks up the address via the RentCast API and overwrites record fields
+          (beds/baths/sqft/lot/year/type/HOA/taxes) where data is available. List
+          price is never overwritten. See docs/DATA_SOURCES.md.
+        </p>
+        {!rentcastConfigured() ? (
+          <p className="text-sm text-slate-400">
+            Set <code className="rounded bg-slate-100 px-1">RENTCAST_API_KEY</code>{" "}
+            to enable enrichment.
+          </p>
+        ) : !enrichment ? (
+          <p className="text-sm text-slate-400">
+            Not enriched yet. Click “Enrich from RentCast”.
+          </p>
+        ) : (
+          <div className="space-y-4 text-sm">
+            <dl className="grid grid-cols-2 gap-x-6 gap-y-1 sm:grid-cols-4">
+              <Fact
+                label="Value estimate"
+                value={fmtMoney(enrichment.valueEstimate)}
+              />
+              <Fact
+                label="Value range"
+                value={
+                  enrichment.valueLow || enrichment.valueHigh
+                    ? `${fmtMoney(enrichment.valueLow)} – ${fmtMoney(
+                        enrichment.valueHigh,
+                      )}`
+                    : "—"
+                }
+              />
+              <Fact
+                label="Rent estimate"
+                value={
+                  enrichment.rentEstimate
+                    ? `${fmtMoney(enrichment.rentEstimate)}/mo`
+                    : "—"
+                }
+              />
+              <Fact
+                label="Last sale"
+                value={
+                  enrichment.lastSalePrice
+                    ? `${fmtMoney(enrichment.lastSalePrice)}${
+                        enrichment.lastSaleDate
+                          ? ` · ${enrichment.lastSaleDate.slice(0, 10)}`
+                          : ""
+                      }`
+                    : "—"
+                }
+              />
+            </dl>
+
+            {enrichComps.length > 0 ? (
+              <div>
+                <p className="mb-1 text-xs font-medium text-slate-500">
+                  Comparable sales
+                </p>
+                <div className="overflow-x-auto rounded border border-slate-100">
+                  <table className="w-full text-xs">
+                    <thead className="bg-slate-50 text-left text-slate-500">
+                      <tr>
+                        <th className="px-2 py-1 font-medium">Address</th>
+                        <th className="px-2 py-1 font-medium">Price</th>
+                        <th className="px-2 py-1 font-medium">Sq ft</th>
+                        <th className="px-2 py-1 font-medium">Bd/Ba</th>
+                        <th className="px-2 py-1 font-medium">Dist</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {enrichComps.map((c, i) => (
+                        <tr key={i}>
+                          <td className="px-2 py-1">{c.address ?? "—"}</td>
+                          <td className="px-2 py-1">{fmtMoney(c.price)}</td>
+                          <td className="px-2 py-1">{fmtNum(c.sqft)}</td>
+                          <td className="px-2 py-1">
+                            {fmtNum(c.beds)}/{fmtNum(c.baths)}
+                          </td>
+                          <td className="px-2 py-1">
+                            {c.distanceMi == null
+                              ? "—"
+                              : `${c.distanceMi.toFixed(1)} mi`}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ) : null}
+
+            <p className="text-xs text-slate-400">
+              Fetched{" "}
+              {enrichment.fetchedAt
+                ? new Date(enrichment.fetchedAt).toLocaleString()
+                : "—"}{" "}
+              from RentCast. Value/rent are AVM estimates, not list prices.
+            </p>
+          </div>
+        )}
+      </section>
+
       {/* Details / edit */}
       <section className="card">
         <h2 className="mb-3 text-lg font-semibold">Details</h2>
         <dl className="mb-4 grid grid-cols-2 gap-x-6 gap-y-1 text-sm sm:grid-cols-4">
           <Fact label="Price" value={fmtMoney(prop.price)} />
           <Fact label="Est. monthly" value={fmtMoney(prop.estMonthlyPayment)} />
-          <Fact label="Beds" value={fmtNum(prop.beds)} />
-          <Fact label="Baths" value={fmtNum(prop.baths)} />
-          <Fact label="Sq ft" value={fmtNum(prop.sqft)} />
-          <Fact label="Lot (ac)" value={fmtNum(prop.lotAcres)} />
-          <Fact label="Year built" value={fmtNum(prop.yearBuilt)} />
-          <Fact label="HOA/mo" value={fmtMoney(prop.hoaMonthly)} />
-          <Fact label="Taxes/yr" value={fmtMoney(prop.taxesAnnual)} />
+          <Fact label="Beds" value={fmtNum(prop.beds)} prov={provMap.get("beds")} />
+          <Fact label="Baths" value={fmtNum(prop.baths)} prov={provMap.get("baths")} />
+          <Fact label="Sq ft" value={fmtNum(prop.sqft)} prov={provMap.get("sqft")} />
+          <Fact label="Lot (ac)" value={fmtNum(prop.lotAcres)} prov={provMap.get("lot_acres")} />
+          <Fact label="Year built" value={fmtNum(prop.yearBuilt)} prov={provMap.get("year_built")} />
+          <Fact label="HOA/mo" value={fmtMoney(prop.hoaMonthly)} prov={provMap.get("hoa_monthly")} />
+          <Fact label="Taxes/yr" value={fmtMoney(prop.taxesAnnual)} prov={provMap.get("taxes_annual")} />
           <Fact label="Days on market" value={fmtNum(prop.daysOnMarket)} />
           <Fact label="School rating" value={fmtNum(prop.schoolRating)} />
-          <Fact label="Type" value={prop.propertyType ?? "—"} />
+          <Fact label="Type" value={prop.propertyType ?? "—"} prov={provMap.get("property_type")} />
           <Fact label="→ Salisbury" value={fmtNum(prop.commuteSalisburyMin, " min")} />
           <Fact label="→ Charlotte" value={fmtNum(prop.commuteCharlotteMin, " min")} />
         </dl>
@@ -384,11 +525,27 @@ export default async function PropertyPage({
   );
 }
 
-function Fact({ label, value }: { label: string; value: React.ReactNode }) {
+function Fact({
+  label,
+  value,
+  prov,
+}: {
+  label: string;
+  value: React.ReactNode;
+  prov?: { source: string; confidence: string | null } | undefined;
+}) {
   return (
     <div>
       <dt className="text-xs text-slate-400">{label}</dt>
       <dd className="font-medium">{value}</dd>
+      {prov ? (
+        <span
+          className={`badge mt-0.5 text-[10px] ${confidenceClass(prov.confidence)}`}
+          title={`Source: ${SOURCE_LABEL[prov.source] ?? prov.source} · confidence: ${prov.confidence ?? "unknown"}`}
+        >
+          {SOURCE_LABEL[prov.source] ?? prov.source}
+        </span>
+      ) : null}
     </div>
   );
 }

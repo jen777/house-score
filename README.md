@@ -11,12 +11,14 @@ and condition/risk/resale — rolled into a **Weighted Score out of 100** and a
 **Recommendation** (Strong candidate / Good option / Maybe / Pass). See
 [`docs/SCORING.md`](docs/SCORING.md).
 
-> **Status:** Phase 1 implemented. A working Next.js + Postgres app: add houses,
-> paste a listing, run Claude extraction, rate the 7 categories (1–5) to get a
-> weighted score + recommendation + estimated monthly payment, compare side by
-> side, view saved homes on a map, and track status. Ships as a Docker Compose
-> stack for Coolify. See [`docs/`](docs/) for the full design and
-> [`docs/DEPLOY.md`](docs/DEPLOY.md) for deployment.
+> **Status:** Phase 1 complete + Phase 2 enrichment. A working Next.js + Postgres
+> app: add houses, paste a listing, run Claude extraction, **enrich from RentCast**
+> (auto-fill record fields, valuation, rent estimate, and comps with per-field
+> source + confidence), rate the 7 categories (1–5) to get a weighted score +
+> recommendation + estimated monthly payment, compare side by side, view saved
+> homes on a map, and track status. Ships as a Docker Compose stack for Coolify.
+> See [`docs/`](docs/) for the full design and [`docs/DEPLOY.md`](docs/DEPLOY.md)
+> for deployment.
 
 ## The core idea
 
@@ -54,14 +56,14 @@ password gate (we grow into Supabase Auth / managed Postgres later).
 | Auth             | Single-user password gate (cookie)     | Supabase Auth |
 | AI extraction    | Claude API (Anthropic)                 | same |
 | Maps / geocoding | Google Maps + Geocoding (optional)     | same |
-| Property data    | Manual + AI extraction                 | RentCast → ATTOM |
+| Property data    | Manual + AI extraction + RentCast       | RentCast → ATTOM |
 | Deployment       | Docker Compose (Coolify proxies)       | same |
 
 ## Run it
 
 ```bash
 # Local dev
-cp .env.example .env        # set APP_PASSWORD, AUTH_SECRET, ANTHROPIC_API_KEY
+cp .env.example .env        # APP_PASSWORD, AUTH_SECRET, ANTHROPIC_API_KEY, RENTCAST_API_KEY
 npm install && npm run dev  # http://localhost:3000
 
 # Full stack (as Coolify runs it)
@@ -92,8 +94,8 @@ docker-compose.yml      app + Postgres, Coolify-friendly
 
 - **Phase 1 — Personal tracker + AI extraction.** Manual address / listing-text
   input. Build the scoring and comparison logic first.
-- **Phase 2 — API enrichment.** Add RentCast for property records, valuation,
-  sales history, and comps.
+- **Phase 2 — API enrichment.** ✅ RentCast for property records, valuation, rent
+  estimate, and comps, with per-field source + confidence. (County GIS later.)
 - **Phase 3 — MLS-quality data.** Partner with a local realtor/brokerage and
   explore Canopy MLS / MLS Grid (RESO Web API) for current Charlotte listings.
 

@@ -141,5 +141,34 @@ CREATE TABLE IF NOT EXISTS scoring_config (
   updated_at timestamptz DEFAULT now()
 );
 
+-- Phase 2: per-field provenance (source + confidence) for enriched fields.
+CREATE TABLE IF NOT EXISTS property_field_provenance (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  property_id uuid NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+  field_name  text NOT NULL,
+  source      text NOT NULL,
+  confidence  text DEFAULT 'unknown',
+  captured_at timestamptz DEFAULT now(),
+  UNIQUE (property_id, field_name)
+);
+
+-- Phase 2: cached property-data API response (valuation, rent, comps + raw).
+CREATE TABLE IF NOT EXISTS property_enrichment (
+  property_id     uuid PRIMARY KEY REFERENCES properties(id) ON DELETE CASCADE,
+  source          text DEFAULT 'rentcast',
+  value_estimate  numeric,
+  value_low       numeric,
+  value_high      numeric,
+  rent_estimate   numeric,
+  rent_low        numeric,
+  rent_high       numeric,
+  last_sale_price numeric,
+  last_sale_date  text,
+  comparables     jsonb,
+  raw             jsonb,
+  fetched_at      timestamptz DEFAULT now()
+);
+
 CREATE INDEX IF NOT EXISTS idx_properties_status ON properties(status);
 CREATE INDEX IF NOT EXISTS idx_notes_property ON property_notes(property_id);
+CREATE INDEX IF NOT EXISTS idx_provenance_property ON property_field_provenance(property_id);

@@ -80,10 +80,11 @@ properties
 - updated_at          timestamptz default now()
 ```
 
-## `property_field_provenance` (optional but recommended)
+## `property_field_provenance`
 
 Tracks where each notable field came from and how confident we are. Avoids
 widening `properties` with a `_source` / `_confidence` column per field.
+Implemented in Phase 2: RentCast enrichment writes one row per field it supplies.
 
 ```
 property_field_provenance
@@ -94,6 +95,31 @@ property_field_provenance
 - confidence    confidence_level
 - captured_at   timestamptz default now()
 - unique (property_id, field_name)
+```
+
+## `property_enrichment`
+
+Phase 2 cache of a property-data API response (currently RentCast). One row per
+property, refreshed on demand (the "Enrich from RentCast" action), not on every
+page load. Record-level fields (beds/sqft/HOA/taxes/...) are written onto
+`properties`; this table holds the **derived estimates and comps** plus the raw
+payload for traceability.
+
+```
+property_enrichment
+- property_id     uuid pk -> properties (on delete cascade)
+- source          text default 'rentcast'
+- value_estimate  numeric        -- AVM value
+- value_low       numeric
+- value_high      numeric
+- rent_estimate   numeric        -- long-term rent AVM
+- rent_low        numeric
+- rent_high       numeric
+- last_sale_price numeric
+- last_sale_date  text
+- comparables     jsonb          -- [{address, price, sqft, beds, baths, distanceMi, daysOld}]
+- raw             jsonb          -- full API payloads (record + value + rent)
+- fetched_at      timestamptz default now()
 ```
 
 ## `property_scores`
@@ -219,6 +245,7 @@ properties 1───1 hoa_details
 properties 1───1 property_features
 properties 1───* property_notes
 properties 1───* property_field_provenance
+properties 1───1 property_enrichment
 properties 1───* score_notes
 auth.users 1───1 scoring_config
 ```

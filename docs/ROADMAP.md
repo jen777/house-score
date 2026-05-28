@@ -51,19 +51,34 @@ paid external APIs required yet.
 
 **Goal:** Reduce manual entry by enriching from a legal property-data API.
 
-- Integrate **RentCast** first: property records, value/rent estimates, comps,
-  active listings, market trends. (ATTOM as a later upgrade for richer
-  tax/ownership/sales-history data.)
-- On "confirm address," call the API to backfill: beds/baths, sqft, lot size,
-  year built, property type, last sale, tax, valuation, comps.
-- Add **confidence levels** to every enriched field and show the source.
-- Begin pulling **county GIS / public records** for parcel, zoning, floodplain.
+- ✅ Integrate **RentCast** first: property records, value/rent estimates, comps.
+  (Active-listing status / market trends and **ATTOM** are later upgrades for
+  richer tax/ownership/sales-history data.)
+- ✅ "Enrich from RentCast" on the property detail page calls the API by address
+  and backfills: beds/baths, sqft, lot size, year built, property type, HOA,
+  tax, plus value/rent estimates and comps. (List price is never overwritten —
+  it's the user's reference, not an AVM.)
+- ✅ **Confidence levels** on every enriched field, with the source surfaced in
+  the UI (`property_field_provenance`: record fields = high, AVM value = medium).
+- ⏳ **County GIS / public records** (parcel, zoning, floodplain) — deferred to a
+  later slice; sources are fragmented and county-specific.
 
 ### Phase 2 acceptance criteria
 
-- Confirming an address auto-populates record fields from RentCast.
-- Each field shows source + confidence.
-- Valuation and comps surface on the property detail page.
+- ✅ Enriching an address auto-populates record fields from RentCast.
+- ✅ Each enriched field shows source + confidence.
+- ✅ Valuation and comps surface on the property detail page.
+
+### How the RentCast enrichment is wired
+
+- `src/lib/rentcast.ts` — server-side client (`RENTCAST_API_KEY`); thin network
+  call `enrichByAddress()` + a pure `normalizeRentcast()` mapping (unit-testable).
+- `enrichPropertyAction` (`src/app/actions.ts`) — overwrites record fields where
+  data exists, upserts `property_enrichment` (value/rent/comps + raw), writes
+  `property_field_provenance`, then re-runs `recomputeProperty` (enriched
+  HOA/taxes flow into the Estimated Monthly Payment).
+- Detail page renders the value/rent/last-sale + comparables table and a
+  source/confidence badge on each enriched fact.
 
 ---
 
