@@ -35,6 +35,9 @@ services:
       # Optional: Google Maps keys for the map view + address geocoding.
       NEXT_PUBLIC_GOOGLE_MAPS_API_KEY: ${NEXT_PUBLIC_GOOGLE_MAPS_API_KEY:-}
       GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY:-}
+      # Optional: RentCast key enables the "Enrich from RentCast" property-data action.
+      RENTCAST_API_KEY: ${RENTCAST_API_KEY:-}
+      RENTCAST_BASE_URL: ${RENTCAST_BASE_URL:-https://api.rentcast.io/v1}
     expose:
       - "3000"
     healthcheck:
