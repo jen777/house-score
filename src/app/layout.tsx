@@ -32,6 +32,9 @@ export default function RootLayout({
                 <Link href="/map" className="hover:text-brand">
                   Map
                 </Link>
+                <Link href="/places" className="hover:text-brand">
+                  Places
+                </Link>
                 <Link href="/properties/new" className="btn">
                   + Add house
                 </Link>

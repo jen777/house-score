@@ -144,6 +144,29 @@ export const propertyEnrichment = pgTable("property_enrichment", {
   fetchedAt: timestamp("fetched_at", { withTimezone: true }).defaultNow(),
 });
 
+// Drive-time feature: the user's saved destinations (grocery, office, gym, ...).
+// Geocoded on save so we can compute driving time from any house to each.
+export const places = pgTable("places", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull(),
+  category: text("category").default("other"), // grocery|office|gym|mall|school|family|other
+  address: text("address").notNull(),
+  latitude: doublePrecision("latitude"),
+  longitude: doublePrecision("longitude"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+});
+
+// Cached driving time + distance from a property to a saved place. One row per
+// (property, place); refreshed on demand from the property page.
+export const propertyDriveTimes = pgTable("property_drive_times", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  propertyId: uuid("property_id").notNull(),
+  placeId: uuid("place_id").notNull(),
+  durationMin: integer("duration_min"),
+  distanceMi: doublePrecision("distance_mi"),
+  computedAt: timestamp("computed_at", { withTimezone: true }).defaultNow(),
+});
+
 export const scoringConfig = pgTable("scoring_config", {
   id: integer("id").primaryKey().default(1),
   weights: jsonb("weights"),
@@ -162,3 +185,6 @@ export type ScoringConfig = typeof scoringConfig.$inferSelect;
 export type PropertyFieldProvenance =
   typeof propertyFieldProvenance.$inferSelect;
 export type PropertyEnrichment = typeof propertyEnrichment.$inferSelect;
+export type Place = typeof places.$inferSelect;
+export type NewPlace = typeof places.$inferInsert;
+export type PropertyDriveTime = typeof propertyDriveTimes.$inferSelect;

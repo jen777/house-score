@@ -12,11 +12,14 @@ import {
   propertyScores,
   propertyEnrichment,
   propertyFieldProvenance,
+  propertyDriveTimes,
+  places,
   scoreNotes,
 } from "@/db/schema";
 import { AUTH_COOKIE, verifyPassword, expectedToken } from "@/lib/auth";
 import { extractListingFeatures } from "@/lib/ai";
 import { geocode } from "@/lib/geocode";
+import { driveTimes } from "@/lib/drivetime";
 import { enrichByAddress } from "@/lib/rentcast";
 import { recomputeProperty, SCORE_COLUMN } from "@/lib/recompute";
 import { CATEGORIES } from "@/lib/scoring";
@@ -436,5 +439,90 @@ export async function addNoteAction(formData: FormData) {
   if (note) {
     await db.insert(propertyNotes).values({ propertyId: id, note, category });
   }
+  revalidatePath(`/properties/${id}`);
+}
+
+// ---- Saved places + drive times ----
+
+/** Add a destination (grocery, office, gym, ...). Geocoded best-effort on save. */
+export async function addPlaceAction(formData: FormData) {
+  const name = String(formData.get("name") ?? "").trim();
+  const address = String(formData.get("address") ?? "").trim();
+  const category = String(formData.get("category") ?? "other");
+  if (!name || !address) redirect("/places?error=name-address");
+
+  const coords = await geocode({ address });
+  await db.insert(places).values({
+    name,
+    address,
+    category,
+    latitude: coords?.latitude ?? null,
+    longitude: coords?.longitude ?? null,
+  });
+
+  revalidatePath("/places");
+  redirect("/places");
+}
+
+export async function deletePlaceAction(formData: FormData) {
+  const id = String(formData.get("id"));
+  await db.delete(places).where(eq(places.id, id));
+  revalidatePath("/places");
+  redirect("/places");
+}
+
+/**
+ * Compute driving time + distance from a property to every saved place and
+ * cache the results. Best-effort: places that can't be routed (or that lack
+ * coordinates) are skipped. Requires a Google Maps key and property coordinates.
+ */
+export async function computeDriveTimesAction(formData: FormData) {
+  const id = String(formData.get("id"));
+  const [prop] = await db
+    .select({
+      id: properties.id,
+      latitude: properties.latitude,
+      longitude: properties.longitude,
+    })
+    .from(properties)
+    .where(eq(properties.id, id));
+  if (!prop) redirect("/");
+  if (prop!.latitude == null || prop!.longitude == null) {
+    redirect(`/properties/${id}?error=no-coords`);
+  }
+
+  const allPlaces = await db.select().from(places);
+  const routable = allPlaces.filter(
+    (p) => p.latitude != null && p.longitude != null,
+  );
+  if (routable.length === 0) {
+    redirect(`/properties/${id}?error=no-places`);
+  }
+
+  const results = await driveTimes(
+    { latitude: prop!.latitude!, longitude: prop!.longitude! },
+    routable.map((p) => ({ latitude: p.latitude!, longitude: p.longitude! })),
+  );
+
+  for (let i = 0; i < routable.length; i++) {
+    const r = results[i];
+    if (!r) continue;
+    const vals = {
+      durationMin: r.durationMin,
+      distanceMi: r.distanceMi,
+      computedAt: new Date(),
+    };
+    await db
+      .insert(propertyDriveTimes)
+      .values({ propertyId: id, placeId: routable[i].id, ...vals })
+      .onConflictDoUpdate({
+        target: [
+          propertyDriveTimes.propertyId,
+          propertyDriveTimes.placeId,
+        ],
+        set: vals,
+      });
+  }
+
   revalidatePath(`/properties/${id}`);
 }

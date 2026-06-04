@@ -122,6 +122,41 @@ property_enrichment
 - fetched_at      timestamptz default now()
 ```
 
+## `places`
+
+User-defined destinations that matter for everyday life — grocery store,
+office, gym/YMCA, mall, family — managed on the **Places** page. Geocoded
+best-effort on save so we can compute driving time from any house. Not
+owner-scoped per house: places are a shared list across all properties.
+
+```
+places
+- id          uuid pk
+- name        text not null   -- "Harris Teeter — Ballantyne"
+- category    text default 'other'  -- grocery | office | gym | mall | school | family | other
+- address     text not null
+- latitude    double precision
+- longitude   double precision
+- created_at  timestamptz default now()
+```
+
+## `property_drive_times`
+
+Cached driving time + distance from a property to a saved place, via the Google
+Distance Matrix API. Computed on demand (the "Calculate drive times" action on
+the property page), one row per (property, place).
+
+```
+property_drive_times
+- id            uuid pk
+- property_id   uuid -> properties (on delete cascade)
+- place_id      uuid -> places (on delete cascade)
+- duration_min  integer        -- driving time, whole minutes
+- distance_mi   double precision -- driving distance, miles
+- computed_at   timestamptz default now()
+- unique (property_id, place_id)
+```
+
 ## `property_scores`
 
 One row per property: the **seven 1–5 category ratings** plus the derived
@@ -247,5 +282,6 @@ properties 1───* property_notes
 properties 1───* property_field_provenance
 properties 1───1 property_enrichment
 properties 1───* score_notes
+properties 1───* property_drive_times *───1 places
 auth.users 1───1 scoring_config
 ```

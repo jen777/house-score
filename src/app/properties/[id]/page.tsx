@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { eq, desc } from "drizzle-orm";
+import { eq, asc, desc } from "drizzle-orm";
 import { db } from "@/db";
 import {
   properties,
@@ -9,6 +9,8 @@ import {
   propertyNotes,
   propertyEnrichment,
   propertyFieldProvenance,
+  propertyDriveTimes,
+  places,
   scoreNotes,
 } from "@/db/schema";
 import {
@@ -18,6 +20,7 @@ import {
 } from "@/lib/scoring";
 import { SCORE_COLUMN } from "@/lib/recompute";
 import { rentcastConfigured } from "@/lib/rentcast";
+import { driveTimesConfigured } from "@/lib/drivetime";
 import {
   STATUSES,
   STATUS_LABEL,
@@ -27,10 +30,12 @@ import {
   ratingClass,
   confidenceClass,
   SOURCE_LABEL,
+  PLACE_CATEGORY_LABEL,
   fmtMoney,
   fmtNum,
   fmtScore,
   fmtRating,
+  fmtDrive,
 } from "@/lib/ui";
 import {
   updatePropertyAction,
@@ -38,11 +43,21 @@ import {
   updateStatusAction,
   extractAction,
   enrichPropertyAction,
+  computeDriveTimesAction,
   saveScoresAction,
   addNoteAction,
 } from "../../actions";
 
 export const dynamic = "force-dynamic";
+
+const ERROR_MESSAGE: Record<string, string> = {
+  "no-address": "Add an address before enriching this house.",
+  "no-coords":
+    "This house has no coordinates yet — re-save the address (with a Maps key set) to geocode it, then try again.",
+  "no-places":
+    "No saved places have coordinates yet. Add destinations on the Places page first.",
+  "no-description": "Add a listing description before running AI extraction.",
+};
 
 function list(v: unknown): string[] {
   return Array.isArray(v) ? (v as string[]) : [];
@@ -89,6 +104,13 @@ export default async function PropertyPage({
     .select()
     .from(propertyFieldProvenance)
     .where(eq(propertyFieldProvenance.propertyId, id));
+  const placeRows = await db.select().from(places).orderBy(asc(places.createdAt));
+  const driveRows = await db
+    .select()
+    .from(propertyDriveTimes)
+    .where(eq(propertyDriveTimes.propertyId, id));
+  const driveMap = new Map(driveRows.map((d) => [d.placeId, d]));
+  const hasCoords = prop.latitude != null && prop.longitude != null;
 
   const noteMap = new Map(catNotes.map((n) => [n.category, n.note ?? ""]));
   const provMap = new Map(
@@ -122,7 +144,7 @@ export default async function PropertyPage({
 
       {error ? (
         <p className="rounded bg-red-50 px-3 py-2 text-sm text-red-700">
-          {decodeURIComponent(error)}
+          {ERROR_MESSAGE[error] ?? decodeURIComponent(error)}
         </p>
       ) : null}
 
@@ -386,6 +408,86 @@ export default async function PropertyPage({
             </p>
           </div>
         )}
+      </section>
+
+      {/* Drive times to saved places */}
+      <section className="card">
+        <div className="mb-1 flex items-center justify-between">
+          <h2 className="text-lg font-semibold">Drive times</h2>
+          <form action={computeDriveTimesAction}>
+            <input type="hidden" name="id" value={prop.id} />
+            <button
+              className="btn"
+              disabled={
+                !driveTimesConfigured() || !hasCoords || placeRows.length === 0
+              }
+            >
+              {driveRows.length ? "Refresh drive times" : "Calculate drive times"}
+            </button>
+          </form>
+        </div>
+        <p className="mb-3 text-xs text-slate-400">
+          Driving time from this house to each of your{" "}
+          <Link href="/places" className="text-brand hover:underline">
+            saved places
+          </Link>
+          .
+        </p>
+        {!driveTimesConfigured() ? (
+          <p className="text-sm text-slate-400">
+            Set{" "}
+            <code className="rounded bg-slate-100 px-1">GOOGLE_MAPS_API_KEY</code>{" "}
+            to enable drive-time lookups.
+          </p>
+        ) : placeRows.length === 0 ? (
+          <p className="text-sm text-slate-400">
+            No saved places yet. Add destinations on the{" "}
+            <Link href="/places" className="text-brand hover:underline">
+              Places
+            </Link>{" "}
+            page first.
+          </p>
+        ) : !hasCoords ? (
+          <p className="text-sm text-slate-400">
+            This house has no coordinates yet, so drive times can’t be computed.
+            Re-save the address (with a Maps key set) to geocode it.
+          </p>
+        ) : (
+          <div className="overflow-x-auto rounded border border-slate-100">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 text-left text-slate-500">
+                <tr>
+                  <th className="px-3 py-1.5 font-medium">Place</th>
+                  <th className="px-3 py-1.5 font-medium">Category</th>
+                  <th className="px-3 py-1.5 font-medium">Drive</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {placeRows.map((pl) => {
+                  const d = driveMap.get(pl.id);
+                  return (
+                    <tr key={pl.id}>
+                      <td className="px-3 py-1.5">{pl.name}</td>
+                      <td className="px-3 py-1.5 text-slate-500">
+                        {PLACE_CATEGORY_LABEL[pl.category ?? "other"] ??
+                          pl.category}
+                      </td>
+                      <td className="px-3 py-1.5 font-medium">
+                        {fmtDrive(d?.durationMin, d?.distanceMi)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {driveRows.length ? (
+          <p className="mt-2 text-xs text-slate-400">
+            Driving estimates from Google. A dash means that place isn’t geocoded
+            or hasn’t been calculated yet.
+          </p>
+        ) : null}
       </section>
 
       {/* Details / edit */}

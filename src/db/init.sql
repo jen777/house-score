@@ -141,6 +141,27 @@ CREATE TABLE IF NOT EXISTS scoring_config (
   updated_at timestamptz DEFAULT now()
 );
 
+-- Drive-time feature: saved destinations + cached driving times per property.
+CREATE TABLE IF NOT EXISTS places (
+  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name       text NOT NULL,
+  category   text DEFAULT 'other',
+  address    text NOT NULL,
+  latitude   double precision,
+  longitude  double precision,
+  created_at timestamptz DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS property_drive_times (
+  id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  property_id  uuid NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+  place_id     uuid NOT NULL REFERENCES places(id) ON DELETE CASCADE,
+  duration_min integer,
+  distance_mi  double precision,
+  computed_at  timestamptz DEFAULT now(),
+  UNIQUE (property_id, place_id)
+);
+
 -- Phase 2: per-field provenance (source + confidence) for enriched fields.
 CREATE TABLE IF NOT EXISTS property_field_provenance (
   id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -172,3 +193,4 @@ CREATE TABLE IF NOT EXISTS property_enrichment (
 CREATE INDEX IF NOT EXISTS idx_properties_status ON properties(status);
 CREATE INDEX IF NOT EXISTS idx_notes_property ON property_notes(property_id);
 CREATE INDEX IF NOT EXISTS idx_provenance_property ON property_field_provenance(property_id);
+CREATE INDEX IF NOT EXISTS idx_drive_times_property ON property_drive_times(property_id);

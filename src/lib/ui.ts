@@ -96,6 +96,37 @@ export const SOURCE_LABEL: Record<string, string> = {
   county_gis: "County GIS",
 };
 
+// Saved-destination categories for the drive-time feature.
+export const PLACE_CATEGORIES = [
+  "grocery",
+  "office",
+  "gym",
+  "mall",
+  "school",
+  "family",
+  "other",
+] as const;
+
+export const PLACE_CATEGORY_LABEL: Record<string, string> = {
+  grocery: "Grocery",
+  office: "Office",
+  gym: "Gym / YMCA",
+  mall: "Mall / shopping",
+  school: "School",
+  family: "Family / friends",
+  other: "Other",
+};
+
+// Human-friendly drive-time string, e.g. "23 min · 12.4 mi".
+export function fmtDrive(
+  durationMin: number | null | undefined,
+  distanceMi: number | null | undefined,
+): string {
+  if (durationMin == null) return "—";
+  const dist = distanceMi == null ? "" : ` · ${distanceMi} mi`;
+  return `${durationMin} min${dist}`;
+}
+
 export function fmtMoney(v: unknown): string {
   if (v == null || v === "") return "—";
   const n = Number(v);

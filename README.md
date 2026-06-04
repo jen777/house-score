@@ -16,7 +16,9 @@ and condition/risk/resale — rolled into a **Weighted Score out of 100** and a
 > (auto-fill record fields, valuation, rent estimate, and comps with per-field
 > source + confidence), rate the 7 categories (1–5) to get a weighted score +
 > recommendation + estimated monthly payment, compare side by side, view saved
-> homes on a map, and track status. Ships as a Docker Compose stack for Coolify.
+> homes on a map, compute **driving times** from each house to your saved
+> places (grocery, office, gym), and track status. Ships as a Docker Compose
+> stack for Coolify.
 > See [`docs/`](docs/) for the full design and [`docs/DEPLOY.md`](docs/DEPLOY.md)
 > for deployment.
 
@@ -82,6 +84,7 @@ src/
     properties/[id]     detail: 1–5 category ratings, AI extraction, notes, edit
     compare             side-by-side comparison
     map                 Google Map of saved homes, pins colored by recommendation
+    places              saved destinations (grocery/office/gym) for drive times
     login               single-user password gate
   db/                   Drizzle schema, client, startup schema init (ensure-schema)
   lib/                  scoring engine (pure), Claude extraction, auth, UI helpers
