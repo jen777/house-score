@@ -32,6 +32,11 @@ import {
   type RentcastEnrichment,
 } from "@/lib/rentcast";
 import {
+  fetchRedfinByUrl,
+  isRedfinUrl,
+  type RedfinListing,
+} from "@/lib/realtyapi";
+import {
   recomputeProperty,
   getScoringConfig,
   SCORE_COLUMN,
@@ -130,6 +135,120 @@ export async function createPropertyAction(formData: FormData) {
       ...fields,
     })
     .returning({ id: properties.id });
+
+  await recomputeProperty(row.id);
+  revalidatePath("/");
+  revalidatePath("/map");
+  redirect(`/properties/${row.id}`);
+}
+
+/**
+ * Create a house in one step from a pasted Redfin listing URL, via RealtyAPI.
+ * Pulls the full property record (price, beds/baths, sqft/lot/year, HOA, taxes,
+ * MLS #, coordinates, listing remarks), inserts the property, records per-field
+ * provenance (source = 'redfin'), and falls back to geocoding only when RealtyAPI
+ * didn't return coordinates. The listing remarks land in `listing_description`
+ * so the user can immediately run AI extraction. On any failure the user is sent
+ * back to the add page with the error so they can retry or add manually.
+ */
+export async function createFromRedfinAction(formData: FormData) {
+  const url = String(formData.get("redfinUrl") ?? "").trim();
+  if (!url) redirect("/properties/new?error=redfin-url");
+  if (!isRedfinUrl(url)) redirect("/properties/new?error=redfin-url");
+
+  let listing: RedfinListing | undefined;
+  try {
+    ({ listing } = await fetchRedfinByUrl(url));
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Redfin import failed";
+    logError("realtyapi", "Redfin import failed", { url, error: err });
+    redirect(`/properties/new?error=${encodeURIComponent(msg)}`);
+  }
+
+  if (!listing!.address) {
+    logWarn("realtyapi", "Redfin import returned no address", { url });
+    redirect(
+      `/properties/new?error=${encodeURIComponent(
+        "RealtyAPI returned no address for that listing",
+      )}`,
+    );
+  }
+
+  // RealtyAPI usually returns coordinates; geocode only as a fallback.
+  let latitude = listing!.latitude;
+  let longitude = listing!.longitude;
+  if (latitude == null || longitude == null) {
+    const coords = await geocode({
+      address: listing!.address!,
+      city: listing!.city,
+      state: listing!.state,
+      zip: listing!.zip,
+    });
+    latitude = coords?.latitude ?? null;
+    longitude = coords?.longitude ?? null;
+  }
+
+  const intRound = (v: number | null): number | null =>
+    v == null ? null : Math.round(v);
+
+  const [row] = await db
+    .insert(properties)
+    .values({
+      address: listing!.address!,
+      status: "New",
+      source: "Redfin",
+      listingUrl: url,
+      city: listing!.city,
+      state: listing!.state,
+      zip: listing!.zip,
+      latitude,
+      longitude,
+      propertyType: listing!.propertyType,
+      price: numStr(listing!.price),
+      beds: numStr(listing!.beds),
+      baths: numStr(listing!.baths),
+      sqft: intRound(listing!.sqft),
+      lotAcres: numStr(listing!.lotAcres),
+      yearBuilt: intRound(listing!.yearBuilt),
+      hoaMonthly: numStr(listing!.hoaMonthly),
+      taxesAnnual: numStr(listing!.taxesAnnual),
+      daysOnMarket: intRound(listing!.daysOnMarket),
+      mlsNumber: listing!.mlsNumber,
+      listingDescription: listing!.description,
+    })
+    .returning({ id: properties.id });
+
+  // Provenance: one row per field RealtyAPI actually populated (high confidence
+  // on listed facts; the listing remarks are listing-sourced).
+  const provFields: { field: string; value: unknown }[] = [
+    { field: "price", value: listing!.price },
+    { field: "beds", value: listing!.beds },
+    { field: "baths", value: listing!.baths },
+    { field: "sqft", value: listing!.sqft },
+    { field: "lot_acres", value: listing!.lotAcres },
+    { field: "year_built", value: listing!.yearBuilt },
+    { field: "hoa_monthly", value: listing!.hoaMonthly },
+    { field: "taxes_annual", value: listing!.taxesAnnual },
+    { field: "property_type", value: listing!.propertyType },
+    { field: "mls_number", value: listing!.mlsNumber },
+  ];
+  for (const p of provFields) {
+    if (p.value == null) continue;
+    await db.insert(propertyFieldProvenance).values({
+      propertyId: row.id,
+      fieldName: p.field,
+      source: "redfin",
+      confidence: "high",
+      capturedAt: new Date(),
+    });
+  }
+
+  logInfo("realtyapi", "house created from Redfin import", {
+    id: row.id,
+    address: listing!.address,
+    hasPrice: listing!.price != null,
+    hasDescription: listing!.description != null,
+  });
 
   await recomputeProperty(row.id);
   revalidatePath("/");

@@ -1,8 +1,16 @@
 import Link from "next/link";
-import { createPropertyAction } from "../../actions";
+import { createPropertyAction, createFromRedfinAction } from "../../actions";
 import { SOURCES } from "@/lib/ui";
+import { realtyapiConfigured } from "@/lib/realtyapi";
 
 export const dynamic = "force-dynamic";
+
+// Friendly text for the known error codes; anything else is a decoded message
+// passed through from a failed import (e.g. RealtyAPI errors).
+const ERROR_TEXT: Record<string, string> = {
+  address: "Address is required.",
+  "redfin-url": "Enter a valid Redfin property URL (redfin.com/...).",
+};
 
 export default async function NewPropertyPage({
   searchParams,
@@ -10,6 +18,11 @@ export default async function NewPropertyPage({
   searchParams: Promise<{ error?: string }>;
 }) {
   const { error } = await searchParams;
+  const redfinReady = realtyapiConfigured();
+  const errorMessage = error
+    ? (ERROR_TEXT[error] ?? decodeURIComponent(error))
+    : null;
+
   return (
     <div className="mx-auto max-w-2xl">
       <div className="mb-4 flex items-center gap-2 text-sm text-slate-500">
@@ -22,11 +35,52 @@ export default async function NewPropertyPage({
 
       <h1 className="mb-4 text-2xl font-semibold">Add a house</h1>
 
-      {error === "address" ? (
+      {errorMessage ? (
         <p className="mb-3 rounded bg-red-50 px-3 py-2 text-sm text-red-700">
-          Address is required.
+          {errorMessage}
         </p>
       ) : null}
+
+      {/* Quick add: paste a Redfin link and pull every detail via RealtyAPI. */}
+      <form action={createFromRedfinAction} className="card mb-5 space-y-3">
+        <div>
+          <label className="label" htmlFor="redfinUrl">
+            Import from Redfin link
+          </label>
+          <div className="flex gap-2">
+            <input
+              id="redfinUrl"
+              name="redfinUrl"
+              className="input flex-1"
+              placeholder="https://www.redfin.com/NC/Charlotte/..."
+              disabled={!redfinReady}
+            />
+            <button
+              type="submit"
+              className="btn whitespace-nowrap"
+              disabled={!redfinReady}
+              title={
+                redfinReady
+                  ? "Pull all property details from Redfin via RealtyAPI"
+                  : "Set REALTYAPI_API_KEY to enable Redfin import"
+              }
+            >
+              Import from Redfin
+            </button>
+          </div>
+          <p className="mt-1 text-xs text-slate-400">
+            {redfinReady
+              ? "Paste a Redfin listing URL to create the house with price, beds/baths, sqft/lot/year, HOA, taxes, MLS #, location, and the listing description — then review and run AI extraction."
+              : "Redfin import is disabled. Set REALTYAPI_API_KEY (server-side) to enable it. You can still add a house manually below."}
+          </p>
+        </div>
+      </form>
+
+      <div className="mb-3 flex items-center gap-3 text-xs uppercase tracking-wide text-slate-400">
+        <span className="h-px flex-1 bg-slate-200" />
+        or add manually
+        <span className="h-px flex-1 bg-slate-200" />
+      </div>
 
       <form action={createPropertyAction} className="space-y-5">
         <div className="card space-y-4">

@@ -22,6 +22,7 @@ and public records.
 | **MLS Grid via Canopy MLS**     | Charlotte-area MLS data                                         | Best long-term option; partner with an agent |
 | **ATTOM API**                   | Property records, ownership, tax, sales history, neighborhood   | Paid; strong enrichment source |
 | **RentCast API**                | Property records, value/rent estimates, active listings, comps  | Easiest for prototyping → **Phase 2 first choice** |
+| **RealtyAPI (realtyapi.io)**    | One-step listing import from a pasted Redfin URL                 | Third-party data API; powers "Import from Redfin link" |
 | **County GIS / public records** | Parcel, zoning, floodplain, tax, ownership, overlays            | Free but fragmented |
 | **Manual listing link/text**    | Easy user input + AI extraction                                 | Reference only, never a scraping foundation |
 
@@ -51,6 +52,30 @@ and public records.
   explicit "Enrich from RentCast" action — never on page load.
 - `RENTCAST_API_KEY` is server-side only; with no key the enrich action is
   disabled.
+
+## RealtyAPI / Redfin link import (implemented)
+
+Adding a house can start from a single **Redfin listing URL**: paste the link on
+the Add-house page and "Import from Redfin link" pulls a full property record via
+[RealtyAPI](https://www.realtyapi.io) and creates the house in one step.
+
+- **We do not scrape Redfin.** RealtyAPI is the third-party provider; our app only
+  calls RealtyAPI server-side (the pasted Redfin URL is the lookup key) and stores
+  what it returns. This keeps the "no direct portal scraping" rule intact.
+- Endpoint: `GET /redfin/detailsByUrl?url=<redfin url>` with the
+  `x-realtyapi-key` header. `src/lib/realtyapi.ts` keeps the network call thin;
+  the field mapping lives in the pure, defensively-written `normalizeRedfin`
+  (reads many candidate field names and tolerates nesting), and the raw payload
+  is kept for traceability.
+- Pulled onto the new property: address/city/state/zip, coordinates, price,
+  beds/baths, sqft/lot/year, HOA, taxes, MLS #, property type, and the listing
+  remarks (stored in `listing_description` so the user can immediately run AI
+  extraction). Coordinates are geocoded only as a fallback.
+- Each populated field gets a `property_field_provenance` row
+  (`source = 'redfin'`, confidence `high`).
+- `REALTYAPI_API_KEY` is server-side only; with no key the import is disabled
+  (the input/button are greyed out) and houses are still added manually.
+  `REALTYAPI_BASE_URL` overrides the API host if needed.
 
 ## HOA data — expect partial automation
 
@@ -91,5 +116,7 @@ Rental restrictions: ?    source: not found                   confidence: Low
   schools, neighborhood, valuation datasets.
 - RentCast API — 140M+ property records, valuations, comps, active listings,
   market trends.
+- RealtyAPI (realtyapi.io) — unified real estate data API (Redfin, Zillow,
+  Realtor, Airbnb); used here for one-step Redfin-URL listing import.
 - NC General Statutes Ch. 47F — Planned Community Act.
 - NC DOJ — Homeowners' Associations (no state/federal HOA oversight).

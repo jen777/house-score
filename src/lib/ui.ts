@@ -90,6 +90,7 @@ export function confidenceClass(c: string | null | undefined): string {
 // Human label for a provenance source key.
 export const SOURCE_LABEL: Record<string, string> = {
   rentcast: "RentCast",
+  redfin: "Redfin (RealtyAPI)",
   mls: "MLS",
   listing: "Listing",
   manual: "Manual",
