@@ -20,6 +20,7 @@ import { AUTH_COOKIE, verifyPassword, expectedToken } from "@/lib/auth";
 import { extractListingFeatures } from "@/lib/ai";
 import { geocode } from "@/lib/geocode";
 import { driveTimes } from "@/lib/drivetime";
+import { logInfo, logWarn, logError } from "@/lib/log";
 import { enrichByAddress } from "@/lib/rentcast";
 import { recomputeProperty, SCORE_COLUMN } from "@/lib/recompute";
 import { CATEGORIES } from "@/lib/scoring";
@@ -241,6 +242,7 @@ export async function extractAction(formData: FormData) {
     revalidatePath(`/properties/${id}`);
   } catch (e) {
     const msg = e instanceof Error ? e.message : "extraction failed";
+    logError("extract", "listing feature extraction failed", { id, error: e });
     redirect(`/properties/${id}?error=${encodeURIComponent(msg)}`);
   }
 }
@@ -363,6 +365,7 @@ export async function enrichPropertyAction(formData: FormData) {
     revalidatePath("/");
   } catch (err) {
     const msg = err instanceof Error ? err.message : "enrichment failed";
+    logError("enrich", "RentCast enrichment failed", { id, error: err });
     redirect(`/properties/${id}?error=${encodeURIComponent(msg)}`);
   }
 }
@@ -452,6 +455,12 @@ export async function addPlaceAction(formData: FormData) {
   if (!name || !address) redirect("/places?error=name-address");
 
   const coords = await geocode({ address });
+  if (!coords) {
+    logWarn("places", "place saved without coordinates (geocoding failed)", {
+      name,
+      address,
+    });
+  }
   await db.insert(places).values({
     name,
     address,
@@ -459,6 +468,7 @@ export async function addPlaceAction(formData: FormData) {
     latitude: coords?.latitude ?? null,
     longitude: coords?.longitude ?? null,
   });
+  logInfo("places", "added place", { name, category, geocoded: !!coords });
 
   revalidatePath("/places");
   redirect("/places");
@@ -486,8 +496,12 @@ export async function computeDriveTimesAction(formData: FormData) {
     })
     .from(properties)
     .where(eq(properties.id, id));
-  if (!prop) redirect("/");
+  if (!prop) {
+    logWarn("drivetime", "compute requested for unknown property", { id });
+    redirect("/");
+  }
   if (prop!.latitude == null || prop!.longitude == null) {
+    logWarn("drivetime", "property has no coordinates; cannot compute", { id });
     redirect(`/properties/${id}?error=no-coords`);
   }
 
@@ -496,14 +510,25 @@ export async function computeDriveTimesAction(formData: FormData) {
     (p) => p.latitude != null && p.longitude != null,
   );
   if (routable.length === 0) {
+    logWarn("drivetime", "no routable places (none have coordinates)", {
+      id,
+      placesTotal: allPlaces.length,
+    });
     redirect(`/properties/${id}?error=no-places`);
   }
+
+  logInfo("drivetime", "computing drive times", {
+    id,
+    placesTotal: allPlaces.length,
+    routable: routable.length,
+  });
 
   const results = await driveTimes(
     { latitude: prop!.latitude!, longitude: prop!.longitude! },
     routable.map((p) => ({ latitude: p.latitude!, longitude: p.longitude! })),
   );
 
+  let written = 0;
   for (let i = 0; i < routable.length; i++) {
     const r = results[i];
     if (!r) continue;
@@ -522,7 +547,15 @@ export async function computeDriveTimesAction(formData: FormData) {
         ],
         set: vals,
       });
+    written++;
   }
+
+  logInfo("drivetime", "drive times computed", {
+    id,
+    routable: routable.length,
+    written,
+    skipped: routable.length - written,
+  });
 
   revalidatePath(`/properties/${id}`);
 }

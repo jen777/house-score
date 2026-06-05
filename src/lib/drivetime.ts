@@ -8,6 +8,7 @@
 // to the public maps key.
 
 import type { LatLng } from "./geocode";
+import { logInfo, logWarn, logError } from "./log";
 
 const METERS_PER_MILE = 1609.34;
 
@@ -52,9 +53,13 @@ export async function driveTimes(
   destinations: LatLng[],
 ): Promise<(DriveResult | null)[]> {
   const key = mapsKey();
-  if (!key || destinations.length === 0) {
+  if (!key) {
+    logWarn("drivetime", "no Google Maps API key configured; skipping", {
+      destinations: destinations.length,
+    });
     return destinations.map(() => null);
   }
+  if (destinations.length === 0) return [];
 
   const originParam = `${origin.latitude},${origin.longitude}`;
   const destParam = destinations
@@ -68,26 +73,71 @@ export async function driveTimes(
       `&destinations=${encodeURIComponent(destParam)}` +
       `&mode=driving&units=imperial&key=${key}`;
     const res = await fetch(url, { cache: "no-store" });
-    if (!res.ok) return destinations.map(() => null);
+    if (!res.ok) {
+      logError("drivetime", "HTTP error from Distance Matrix API", {
+        httpStatus: res.status,
+        destinations: destinations.length,
+      });
+      return destinations.map(() => null);
+    }
     const body = (await res.json()) as {
       status?: string;
+      error_message?: string;
       rows?: { elements?: MatrixElement[] }[];
     };
-    if (body.status !== "OK") return destinations.map(() => null);
+    // status REQUEST_DENIED usually means the Distance Matrix API isn't enabled
+    // on the key (the most common cause of "drive times never show up");
+    // error_message carries Google's exact explanation.
+    if (body.status !== "OK") {
+      logError("drivetime", "Distance Matrix API returned non-OK status", {
+        status: body.status,
+        error: body.error_message,
+        destinations: destinations.length,
+      });
+      return destinations.map(() => null);
+    }
 
     const elements = body.rows?.[0]?.elements ?? [];
-    return destinations.map((_, i) => {
+    let ok = 0;
+    let failed = 0;
+    const out = destinations.map((_, i) => {
       const el = elements[i];
-      if (!el || el.status !== "OK") return null;
+      if (!el || el.status !== "OK") {
+        // Per-leg failure: NOT_FOUND (un-geocodable point) or ZERO_RESULTS
+        // (no drivable route, e.g. an island).
+        logWarn("drivetime", "no route for destination", {
+          index: i,
+          status: el?.status ?? "MISSING",
+        });
+        failed++;
+        return null;
+      }
       const seconds = el.duration?.value;
       const meters = el.distance?.value;
-      if (typeof seconds !== "number" || typeof meters !== "number") return null;
+      if (typeof seconds !== "number" || typeof meters !== "number") {
+        logWarn("drivetime", "missing duration/distance for destination", {
+          index: i,
+        });
+        failed++;
+        return null;
+      }
+      ok++;
       return {
         durationMin: Math.round(seconds / 60),
         distanceMi: Math.round((meters / METERS_PER_MILE) * 10) / 10,
       };
     });
-  } catch {
+    logInfo("drivetime", "computed drive times", {
+      requested: destinations.length,
+      ok,
+      failed,
+    });
+    return out;
+  } catch (err) {
+    logError("drivetime", "network error calling Distance Matrix API", {
+      error: err,
+      destinations: destinations.length,
+    });
     return destinations.map(() => null);
   }
 }
