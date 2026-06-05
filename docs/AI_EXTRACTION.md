@@ -18,9 +18,22 @@ populate `property_features` and feed the scoring engine.
 {
   "address": "optional, for context",
   "listing_text": "the pasted listing description / remarks",
-  "property_type": "optional hint: single_family | townhome | condo"
+  "property_type": "optional hint: single_family | townhome | condo",
+  "market_data": "optional RentCast facts (see below) to ground the model"
 }
 ```
+
+When the property has already been enriched (Phase 2), we pass the cached
+**RentCast facts** alongside the listing text: beds/baths/sqft/lot/year/type,
+HOA + taxes, last sale, the value and long-term-rent estimates (with ranges),
+and comparable sales. These are presented to the model as *authoritative* data —
+more reliable than the seller's marketing copy. The model uses them to ground
+its judgement: it fills `extracted_numeric_hints` from the **listing text only**
+(so the user can compare the seller's claims against the API facts), informs
+financial-fit and resale observations from the valuation / rent / comps, and
+flags clear contradictions (e.g. omitted HOA, overstated space) as `concerns`.
+This block is rebuilt from the cached enrichment on every extraction, so
+re-enriching then re-extracting picks up fresh data.
 
 ## Output schema
 

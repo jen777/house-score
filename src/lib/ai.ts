@@ -52,6 +52,19 @@ Rules:
 - Numeric hints are best-effort and may be overridden by the user later.
 - Flag uncertainty (e.g. unknown HOA restrictions, possible deferred maintenance)
   in "concerns".
+- You may be given a "Property data" block sourced from a licensed property-data
+  API (RentCast). Treat those values as authoritative facts about the property —
+  more reliable than the listing copy, which is marketing written by the seller.
+  Use them to ground your analysis:
+  - Lean on the API beds/baths/sqft/lot/year/type when judging layout and fit;
+    fill "extracted_numeric_hints" from the LISTING TEXT only (so the user can
+    compare the seller's claims against the API facts).
+  - Use the valuation and rent estimates to inform financial-fit observations
+    (e.g. list price well above the estimated value, or strong rent coverage).
+  - Use comparable sales for resale/condition context.
+  - When the listing's claims clearly contradict the API data (e.g. the copy
+    implies far more space, or omits a known HOA / high taxes), call that out in
+    "concerns".
 - Always respond by calling the record_listing_features tool.`;
 
 const TOOL = {
@@ -91,15 +104,123 @@ const TOOL = {
   },
 };
 
+/**
+ * Authoritative property facts from the RentCast enrichment, passed alongside the
+ * listing text so the model can ground its analysis in real data rather than the
+ * seller's marketing copy. Every field is optional — supply what's available.
+ */
+export interface PropertyMarketData {
+  beds?: number | null;
+  baths?: number | null;
+  sqft?: number | null;
+  lotAcres?: number | null;
+  yearBuilt?: number | null;
+  propertyType?: string | null;
+  hoaMonthly?: number | null;
+  taxesAnnual?: number | null;
+  lastSalePrice?: number | null;
+  lastSaleDate?: string | null;
+  valueEstimate?: number | null;
+  valueLow?: number | null;
+  valueHigh?: number | null;
+  rentEstimate?: number | null;
+  rentLow?: number | null;
+  rentHigh?: number | null;
+  comparables?: {
+    address?: string | null;
+    price?: number | null;
+    sqft?: number | null;
+    beds?: number | null;
+    baths?: number | null;
+    distanceMi?: number | null;
+    daysOld?: number | null;
+  }[];
+}
+
 export interface ExtractInput {
   listingText: string;
   address?: string;
   propertyType?: string;
+  /** RentCast-sourced facts to ground the model (optional). */
+  marketData?: PropertyMarketData;
 }
 
 export interface ExtractResult {
   data: Extraction;
   model: string;
+}
+
+const usd = (n: number | null | undefined): string | null =>
+  n == null ? null : `$${Math.round(n).toLocaleString("en-US")}`;
+
+const range = (
+  lo: number | null | undefined,
+  hi: number | null | undefined,
+): string => {
+  const l = usd(lo);
+  const h = usd(hi);
+  return l && h ? ` (range ${l}–${h})` : "";
+};
+
+/**
+ * Render the RentCast facts as a compact, labelled text block. Returns null when
+ * there's effectively nothing to share, so we don't add an empty section.
+ */
+export function formatMarketData(m: PropertyMarketData): string | null {
+  const lines: string[] = [];
+
+  const size = [
+    m.sqft != null ? `${m.sqft.toLocaleString("en-US")} sqft` : null,
+    m.lotAcres != null ? `${m.lotAcres} acre lot` : null,
+  ].filter(Boolean);
+  const bedbath = [
+    m.beds != null ? `${m.beds} bed` : null,
+    m.baths != null ? `${m.baths} bath` : null,
+  ].filter(Boolean);
+
+  if (m.propertyType) lines.push(`- Property type: ${m.propertyType}`);
+  if (bedbath.length) lines.push(`- Beds/baths: ${bedbath.join(" / ")}`);
+  if (size.length) lines.push(`- Size: ${size.join(", ")}`);
+  if (m.yearBuilt != null) lines.push(`- Year built: ${m.yearBuilt}`);
+  if (m.hoaMonthly != null) lines.push(`- HOA: ${usd(m.hoaMonthly)}/month`);
+  if (m.taxesAnnual != null)
+    lines.push(`- Property taxes: ${usd(m.taxesAnnual)}/year`);
+  if (m.lastSalePrice != null || m.lastSaleDate)
+    lines.push(
+      `- Last sale: ${usd(m.lastSalePrice) ?? "price unknown"}${
+        m.lastSaleDate ? ` on ${m.lastSaleDate}` : ""
+      }`,
+    );
+  if (m.valueEstimate != null)
+    lines.push(
+      `- Estimated value: ${usd(m.valueEstimate)}${range(m.valueLow, m.valueHigh)}`,
+    );
+  if (m.rentEstimate != null)
+    lines.push(
+      `- Estimated long-term rent: ${usd(m.rentEstimate)}/month${range(
+        m.rentLow,
+        m.rentHigh,
+      )}`,
+    );
+
+  const comps = (m.comparables ?? []).filter((c) => c.address || c.price != null);
+  if (comps.length) {
+    lines.push("- Comparable sales:");
+    for (const c of comps.slice(0, 6)) {
+      const parts = [
+        usd(c.price),
+        c.sqft != null ? `${c.sqft.toLocaleString("en-US")} sqft` : null,
+        c.beds != null || c.baths != null
+          ? `${c.beds ?? "?"}bd/${c.baths ?? "?"}ba`
+          : null,
+        c.distanceMi != null ? `${c.distanceMi} mi away` : null,
+        c.daysOld != null ? `${c.daysOld} days old` : null,
+      ].filter(Boolean);
+      lines.push(`  - ${c.address ?? "comparable"}${parts.length ? ` — ${parts.join(", ")}` : ""}`);
+    }
+  }
+
+  return lines.length ? lines.join("\n") : null;
 }
 
 export async function extractListingFeatures(
@@ -112,18 +233,26 @@ export async function extractListingFeatures(
   const model = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-6";
   const client = new Anthropic({ apiKey });
 
+  const marketBlock = input.marketData
+    ? formatMarketData(input.marketData)
+    : null;
+
   const context = [
     input.address ? `Address: ${input.address}` : null,
     input.propertyType ? `Property type: ${input.propertyType}` : null,
+    marketBlock
+      ? `Property data (authoritative, from a licensed property-data API):\n${marketBlock}`
+      : null,
     "Listing description:",
     input.listingText,
   ]
     .filter(Boolean)
-    .join("\n");
+    .join("\n\n");
 
   logInfo("anthropic", "messages.create request", {
     model,
     listingChars: input.listingText.length,
+    marketData: marketBlock ? "included" : "none",
   });
   const started = Date.now();
 

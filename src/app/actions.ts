@@ -21,7 +21,12 @@ import { extractListingFeatures } from "@/lib/ai";
 import { geocode } from "@/lib/geocode";
 import { driveTimes } from "@/lib/drivetime";
 import { logInfo, logWarn, logError } from "@/lib/log";
-import { enrichByAddress } from "@/lib/rentcast";
+import {
+  enrichByAddress,
+  normalizeRentcast,
+  type RentcastEnrichment,
+} from "@/lib/rentcast";
+import type { PropertyMarketData } from "@/lib/ai";
 import { recomputeProperty, SCORE_COLUMN } from "@/lib/recompute";
 import { CATEGORIES } from "@/lib/scoring";
 
@@ -200,6 +205,52 @@ export async function updateStatusAction(formData: FormData) {
 
 // ---- AI extraction ----
 
+/**
+ * Build the RentCast facts block for a property from its cached enrichment, so
+ * the AI extraction can reason over real property data. Reconstructs the
+ * normalized enrichment from the stored raw payload (the single source of truth);
+ * returns undefined when the property hasn't been enriched yet.
+ */
+async function loadMarketData(
+  propertyId: string,
+): Promise<PropertyMarketData | undefined> {
+  const [row] = await db
+    .select()
+    .from(propertyEnrichment)
+    .where(eq(propertyEnrichment.propertyId, propertyId));
+  if (!row?.raw) return undefined;
+
+  const raw = row.raw as RentcastEnrichment["raw"];
+  const e = normalizeRentcast(raw.record, raw.value, raw.rent);
+  return {
+    beds: e.record.beds,
+    baths: e.record.baths,
+    sqft: e.record.sqft,
+    lotAcres: e.record.lotAcres,
+    yearBuilt: e.record.yearBuilt,
+    propertyType: e.record.propertyType,
+    hoaMonthly: e.record.hoaMonthly,
+    taxesAnnual: e.record.taxesAnnual,
+    lastSalePrice: e.record.lastSalePrice,
+    lastSaleDate: e.record.lastSaleDate,
+    valueEstimate: e.valuation.value,
+    valueLow: e.valuation.valueLow,
+    valueHigh: e.valuation.valueHigh,
+    rentEstimate: e.rent.rent,
+    rentLow: e.rent.rentLow,
+    rentHigh: e.rent.rentHigh,
+    comparables: e.comparables.map((c) => ({
+      address: c.address,
+      price: c.price,
+      sqft: c.sqft,
+      beds: c.beds,
+      baths: c.baths,
+      distanceMi: c.distanceMi,
+      daysOld: c.daysOld,
+    })),
+  };
+}
+
 export async function extractAction(formData: FormData) {
   const id = String(formData.get("id"));
   const [prop] = await db
@@ -210,11 +261,19 @@ export async function extractAction(formData: FormData) {
     redirect(`/properties/${id}?error=no-description`);
   }
 
+  // If the property has been enriched, feed the RentCast facts to the model so it
+  // can ground its analysis in real data instead of the seller's marketing copy.
+  const marketData = await loadMarketData(id);
+  if (marketData) {
+    logInfo("extract", "including RentCast market data in extraction", { id });
+  }
+
   try {
     const { data, model } = await extractListingFeatures({
       listingText: prop!.listingDescription!,
       address: prop!.address,
       propertyType: prop!.propertyType ?? undefined,
+      marketData,
     });
 
     const values = {
