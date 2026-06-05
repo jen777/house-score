@@ -21,6 +21,7 @@ import {
 import { SCORE_COLUMN } from "@/lib/recompute";
 import { rentcastConfigured } from "@/lib/rentcast";
 import { driveTimesConfigured } from "@/lib/drivetime";
+import { aiConfigured } from "@/lib/ai";
 import {
   STATUSES,
   STATUS_LABEL,
@@ -45,6 +46,7 @@ import {
   enrichPropertyAction,
   computeDriveTimesAction,
   saveScoresAction,
+  suggestRatingsAction,
   addNoteAction,
 } from "../../actions";
 
@@ -201,11 +203,32 @@ export default async function PropertyPage({
 
       {/* Category ratings */}
       <section className="card">
-        <h2 className="mb-1 text-lg font-semibold">Category ratings</h2>
+        <div className="mb-1 flex items-center justify-between gap-3">
+          <h2 className="text-lg font-semibold">Category ratings</h2>
+          <form action={suggestRatingsAction}>
+            <input type="hidden" name="id" value={prop.id} />
+            <button
+              className="btn"
+              disabled={!aiConfigured()}
+              title={
+                aiConfigured()
+                  ? "Let AI propose all seven ratings from this house's data"
+                  : "Set ANTHROPIC_API_KEY to enable AI rating suggestions"
+              }
+            >
+              Suggest with AI
+            </button>
+          </form>
+        </div>
         <p className="mb-3 text-xs text-slate-400">
           Rate each category 1–5 (1 = poor, 5 = excellent). The Weighted Score
           (0–100) and Recommendation update on save. A “must-have issue” forces a
-          Pass. See the rubric in docs/SCORING.md.
+          Pass. See the rubric in docs/SCORING.md.{" "}
+          <span className="text-slate-400">
+            “Suggest with AI” fills all seven from the house’s facts, listing
+            analysis, RentCast data, and drive times (overwriting current
+            ratings/notes) — review and adjust before saving.
+          </span>
         </p>
         <form action={saveScoresAction} className="space-y-2">
           <input type="hidden" name="id" value={prop.id} />

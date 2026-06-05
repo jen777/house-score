@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import { logInfo, logError } from "./log";
+import { CATEGORIES, type CategoryKey } from "./scoring";
 
 // Structured output schema for listing extraction. See docs/AI_EXTRACTION.md.
 export const extractionSchema = z.object({
@@ -135,6 +136,11 @@ export interface PropertyMarketData {
     distanceMi?: number | null;
     daysOld?: number | null;
   }[];
+}
+
+/** True when an Anthropic API key is configured (AI features are available). */
+export function aiConfigured(): boolean {
+  return Boolean(process.env.ANTHROPIC_API_KEY);
 }
 
 export interface ExtractInput {
@@ -307,4 +313,164 @@ export async function extractListingFeatures(
 
   const data = extractionSchema.parse(toolUse.input);
   return { data, model };
+}
+
+// ===========================================================================
+// Category-rating suggestions
+//
+// Propose the seven 1–5 category ratings from everything the app knows about a
+// house (facts + AI extraction + RentCast enrichment + drive times), graded
+// against the rubric in docs/SCORING.md. The model proposes; the user disposes
+// — the suggestions land in the ratings form for review before they're saved.
+// ===========================================================================
+
+// Compact rubric (mirrors docs/SCORING.md) so the model grades consistently.
+const RUBRIC = `Rate each category 1–5 (1 = poor, 2 = weak, 3 = acceptable, 4 = good, 5 = excellent).
+
+Location / walkability — 5: very strong target area, sidewalks, parks/walkable, safe & pleasant; 3: okay but car-dependent; 1: wrong area, isolated, unsafe, or major traffic.
+Community / kids amenities — 5: pool/playground/clubhouse or strong kid-friendly community, not crowded; 3: basic neighborhood, limited amenities; 1: no amenities or poor fit for young kids.
+House layout / family fit — 5: 3–4 beds, practical layout, storage, safe yard, WFH space, guest/help space; 3: works with tradeoffs; 1: does not work for family needs.
+Schools / childcare fit — 5: strong school zone + childcare/activities access; 3: acceptable but needs research; 1: major school/childcare concern.
+Commute / access — 5: easy access to office, Charlotte, airport, stores, activities; 3: acceptable; 1: too far or impractical.
+Financial fit — 5: within budget, comfortable monthly cost, reasonable HOA/taxes; 3: at the limit, needs careful review; 1: not financially reasonable.
+Condition / risk / resale — 5: move-in ready, low risk, strong resale; 3: some repairs/unknowns; 1: major red flags.`;
+
+const RATINGS_SYSTEM_PROMPT = `You are a home-buying decision assistant. Given a
+dossier of everything known about one house, propose a 1–5 rating for each of the
+seven scoring categories, following the rubric exactly.
+
+Rules:
+- Ground every rating in the dossier. Judge "Financial fit" and "Commute / access"
+  against the buyer's stated targets (budget, comfortable monthly, target commute
+  times) when provided.
+- Treat RentCast/property-API figures and computed drive times as facts; treat the
+  listing description as seller marketing (useful but optimistic).
+- When data for a category is thin, rate conservatively toward the middle (3) and
+  say so in the rationale — never invent facts.
+- Each rationale is ONE short sentence citing the specific evidence used.
+- Rate all seven categories. Always respond by calling the record_category_ratings tool.`;
+
+const ratingShape = {
+  type: "object" as const,
+  properties: {
+    rating: { type: "integer", minimum: 1, maximum: 5 },
+    rationale: { type: "string" },
+  },
+  required: ["rating", "rationale"],
+};
+
+const RATINGS_TOOL = {
+  name: "record_category_ratings",
+  description:
+    "Record the proposed 1–5 rating and a one-sentence rationale for each of the seven categories.",
+  input_schema: {
+    type: "object" as const,
+    properties: Object.fromEntries(
+      CATEGORIES.map((key) => [key, ratingShape]),
+    ) as Record<string, typeof ratingShape>,
+    required: [...CATEGORIES],
+  },
+};
+
+const ratingEntrySchema = z.object({
+  rating: z.coerce.number().int().min(1).max(5),
+  rationale: z.string().default(""),
+});
+
+const ratingsSchema = z.object(
+  Object.fromEntries(
+    CATEGORIES.map((key) => [key, ratingEntrySchema]),
+  ) as Record<CategoryKey, typeof ratingEntrySchema>,
+);
+
+export interface SuggestedRating {
+  rating: number;
+  rationale: string;
+}
+
+export type SuggestedRatings = Record<CategoryKey, SuggestedRating>;
+
+export interface SuggestRatingsResult {
+  ratings: SuggestedRatings;
+  model: string;
+}
+
+/**
+ * Ask the model to propose all seven category ratings from a prebuilt dossier
+ * (a labelled, multi-section text snapshot of the property's data). Returns one
+ * { rating, rationale } per category. Throws if the model returns no structured
+ * output or the API call fails (the caller surfaces the error).
+ */
+export async function suggestCategoryRatings(
+  dossier: string,
+): Promise<SuggestRatingsResult> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    throw new Error("ANTHROPIC_API_KEY is not configured");
+  }
+  const model = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-6";
+  const client = new Anthropic({ apiKey });
+
+  const content = `${RUBRIC}\n\n---\nHouse dossier:\n${dossier}`;
+
+  logInfo("anthropic", "messages.create request", {
+    model,
+    purpose: "category-ratings",
+    dossierChars: dossier.length,
+  });
+  const started = Date.now();
+
+  let message;
+  try {
+    message = await client.messages.create({
+      model,
+      max_tokens: 1200,
+      system: [
+        {
+          type: "text",
+          text: RATINGS_SYSTEM_PROMPT,
+          cache_control: { type: "ephemeral" },
+        },
+      ],
+      tools: [RATINGS_TOOL],
+      tool_choice: { type: "tool", name: "record_category_ratings" },
+      messages: [{ role: "user", content }],
+    });
+  } catch (err) {
+    const status = err instanceof Anthropic.APIError ? err.status : undefined;
+    logError("anthropic", "messages.create failed", {
+      model,
+      purpose: "category-ratings",
+      status,
+      ms: Date.now() - started,
+      error: err,
+    });
+    throw err;
+  }
+
+  logInfo("anthropic", "messages.create response", {
+    model,
+    purpose: "category-ratings",
+    ms: Date.now() - started,
+    stopReason: message.stop_reason,
+    inputTokens: message.usage?.input_tokens,
+    outputTokens: message.usage?.output_tokens,
+    cacheReadTokens: message.usage?.cache_read_input_tokens,
+    cacheWriteTokens: message.usage?.cache_creation_input_tokens,
+  });
+
+  const toolUse = message.content.find((c) => c.type === "tool_use");
+  if (!toolUse || toolUse.type !== "tool_use") {
+    logError("anthropic", "model did not return structured tool output", {
+      model,
+      purpose: "category-ratings",
+      stopReason: message.stop_reason,
+    });
+    throw new Error("Model did not return category ratings");
+  }
+
+  const parsed = ratingsSchema.parse(toolUse.input);
+  // Zod gives us a plain object keyed by CategoryKey; cast through the known shape.
+  const ratings = parsed as unknown as SuggestedRatings;
+  return { ratings, model };
 }

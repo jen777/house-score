@@ -17,7 +17,12 @@ import {
   scoreNotes,
 } from "@/db/schema";
 import { AUTH_COOKIE, verifyPassword, expectedToken } from "@/lib/auth";
-import { extractListingFeatures } from "@/lib/ai";
+import {
+  extractListingFeatures,
+  suggestCategoryRatings,
+  formatMarketData,
+  type PropertyMarketData,
+} from "@/lib/ai";
 import { geocode } from "@/lib/geocode";
 import { driveTimes } from "@/lib/drivetime";
 import { logInfo, logWarn, logError } from "@/lib/log";
@@ -26,9 +31,12 @@ import {
   normalizeRentcast,
   type RentcastEnrichment,
 } from "@/lib/rentcast";
-import type { PropertyMarketData } from "@/lib/ai";
-import { recomputeProperty, SCORE_COLUMN } from "@/lib/recompute";
-import { CATEGORIES } from "@/lib/scoring";
+import {
+  recomputeProperty,
+  getScoringConfig,
+  SCORE_COLUMN,
+} from "@/lib/recompute";
+import { CATEGORIES, type ScoringInputs } from "@/lib/scoring";
 
 // ---- Auth ----
 
@@ -430,6 +438,241 @@ export async function enrichPropertyAction(formData: FormData) {
 }
 
 // ---- Category ratings (the seven 1–5 scores) ----
+
+/** Plain-text money formatter for the AI dossier (skips blanks). */
+function dossierMoney(v: unknown): string | null {
+  const n = v == null ? null : Number(v);
+  return n == null || Number.isNaN(n)
+    ? null
+    : `$${Math.round(n).toLocaleString("en-US")}`;
+}
+
+function jsonList(v: unknown): string[] {
+  return Array.isArray(v)
+    ? (v as unknown[]).filter((s): s is string => typeof s === "string")
+    : [];
+}
+
+/**
+ * Assemble a labelled, multi-section dossier of everything the app knows about a
+ * property, for the AI category-rating suggester. Empty sections are omitted so
+ * the model isn't fed noise.
+ */
+function buildRatingDossier(args: {
+  prop: typeof properties.$inferSelect;
+  features: typeof propertyFeatures.$inferSelect | undefined;
+  marketData: PropertyMarketData | undefined;
+  drives: {
+    name: string;
+    category: string | null;
+    durationMin: number | null;
+    distanceMi: number | null;
+  }[];
+  inputs: ScoringInputs;
+}): string {
+  const { prop, features, marketData, drives, inputs } = args;
+  const sections: string[] = [];
+
+  const loc = [prop.communityHoa, prop.cityArea, prop.city, prop.state, prop.zip]
+    .filter(Boolean)
+    .join(", ");
+  sections.push(
+    `Address: ${prop.address}` +
+      (loc ? `\nArea: ${loc}` : "") +
+      (prop.propertyType ? `\nType: ${prop.propertyType}` : ""),
+  );
+
+  // Listed facts (the property row — may be user-entered or RentCast-overwritten).
+  const facts: string[] = [];
+  const push = (label: string, val: string | null) => {
+    if (val) facts.push(`- ${label}: ${val}`);
+  };
+  push("List price", dossierMoney(prop.price));
+  push("Est. monthly payment", dossierMoney(prop.estMonthlyPayment));
+  const bb = [
+    prop.beds != null ? `${prop.beds} bed` : null,
+    prop.baths != null ? `${prop.baths} bath` : null,
+  ]
+    .filter(Boolean)
+    .join(" / ");
+  push("Beds/baths", bb || null);
+  push("Sq ft", prop.sqft != null ? String(prop.sqft) : null);
+  push("Lot (acres)", prop.lotAcres != null ? String(prop.lotAcres) : null);
+  push("Year built", prop.yearBuilt != null ? String(prop.yearBuilt) : null);
+  push("HOA/mo", dossierMoney(prop.hoaMonthly));
+  push("Taxes/yr", dossierMoney(prop.taxesAnnual));
+  push(
+    "Days on market",
+    prop.daysOnMarket != null ? String(prop.daysOnMarket) : null,
+  );
+  push(
+    "School rating",
+    prop.schoolRating != null ? String(prop.schoolRating) : null,
+  );
+  push(
+    "Commute → Salisbury office",
+    prop.commuteSalisburyMin != null ? `${prop.commuteSalisburyMin} min` : null,
+  );
+  push(
+    "Commute → Charlotte/Uptown",
+    prop.commuteCharlotteMin != null ? `${prop.commuteCharlotteMin} min` : null,
+  );
+  if (facts.length) sections.push(`Listed facts:\n${facts.join("\n")}`);
+
+  const ownerNotes: string[] = [];
+  if (prop.accessNotes) ownerNotes.push(`- Access: ${prop.accessNotes}`);
+  if (prop.amenitiesNotes) ownerNotes.push(`- Amenities: ${prop.amenitiesNotes}`);
+  if (prop.risksRedFlags)
+    ownerNotes.push(`- Risks/red flags: ${prop.risksRedFlags}`);
+  if (ownerNotes.length) sections.push(`Owner notes:\n${ownerNotes.join("\n")}`);
+
+  if (features) {
+    const fx: string[] = [];
+    const addList = (label: string, items: string[]) => {
+      if (items.length) fx.push(`- ${label}: ${items.join("; ")}`);
+    };
+    if (features.emotionalFitSummary)
+      fx.push(`- Summary: ${features.emotionalFitSummary}`);
+    addList("Family-friendly", jsonList(features.familyFriendly));
+    addList("Walking", jsonList(features.walkingFeatures));
+    addList("Work from home", jsonList(features.workFromHome));
+    addList("Community amenities", jsonList(features.communityAmenities));
+    addList("Renovation risk", jsonList(features.renovationRisk));
+    addList("Concerns", jsonList(features.concerns));
+    if (fx.length)
+      sections.push(`AI listing analysis (from the description):\n${fx.join("\n")}`);
+  }
+
+  if (marketData) {
+    const block = formatMarketData(marketData);
+    if (block)
+      sections.push(`Property-API data (RentCast, authoritative):\n${block}`);
+  }
+
+  const driveLines = drives
+    .filter((d) => d.durationMin != null)
+    .map(
+      (d) =>
+        `- ${d.name}${d.category ? ` (${d.category})` : ""}: ${d.durationMin} min` +
+        (d.distanceMi != null ? `, ${d.distanceMi} mi` : ""),
+    );
+  if (driveLines.length)
+    sections.push(`Drive times to saved places:\n${driveLines.join("\n")}`);
+
+  sections.push(
+    [
+      "Buyer targets (judge financial fit & commute against these):",
+      `- Max budget: ${dossierMoney(inputs.max_budget)}`,
+      `- Preferred price: ${dossierMoney(inputs.preferred_price)}`,
+      `- Comfortable monthly payment: ${dossierMoney(inputs.comfortable_monthly)}`,
+      `- Minimum bedrooms: ${inputs.min_bedrooms}`,
+      `- Target commute → Salisbury: ${inputs.target_commute_salisbury_min} min`,
+      `- Target commute → Charlotte: ${inputs.target_commute_charlotte_min} min`,
+    ].join("\n"),
+  );
+
+  return sections.join("\n\n");
+}
+
+/**
+ * Propose all seven 1–5 category ratings with AI, from the property's full data
+ * (facts + listing analysis + RentCast enrichment + drive times) graded against
+ * the rubric and the buyer's targets. Writes the suggested ratings to
+ * property_scores and each rationale to the category's "why" note, then
+ * recomputes — so the ratings form shows the AI's picks for the user to review,
+ * adjust, and re-save. Overwrites existing ratings/notes (it's an explicit,
+ * user-triggered suggestion).
+ */
+export async function suggestRatingsAction(formData: FormData) {
+  const id = String(formData.get("id"));
+  const [prop] = await db
+    .select()
+    .from(properties)
+    .where(eq(properties.id, id));
+  if (!prop) redirect("/");
+
+  const [features] = await db
+    .select()
+    .from(propertyFeatures)
+    .where(eq(propertyFeatures.propertyId, id));
+  const marketData = await loadMarketData(id);
+  const driveRows = await db
+    .select()
+    .from(propertyDriveTimes)
+    .where(eq(propertyDriveTimes.propertyId, id));
+  const placeRows = await db.select().from(places);
+  const placeById = new Map(placeRows.map((p) => [p.id, p]));
+  const drives = driveRows.map((d) => {
+    const pl = placeById.get(d.placeId);
+    return {
+      name: pl?.name ?? "place",
+      category: pl?.category ?? null,
+      durationMin: d.durationMin,
+      distanceMi: d.distanceMi,
+    };
+  });
+  const { inputs } = await getScoringConfig();
+
+  try {
+    const dossier = buildRatingDossier({
+      prop: prop!,
+      features,
+      marketData,
+      drives,
+      inputs,
+    });
+    logInfo("rate", "requesting AI category-rating suggestions", {
+      id,
+      dossierChars: dossier.length,
+      hasExtraction: !!features,
+      hasMarketData: !!marketData,
+      driveTimes: drives.length,
+    });
+
+    const { ratings, model } = await suggestCategoryRatings(dossier);
+
+    // 1. Write the seven ratings onto property_scores (overwrites prior values).
+    const ratingCols: Record<string, number> = {};
+    for (const key of CATEGORIES) {
+      ratingCols[SCORE_COLUMN[key] as string] = ratings[key].rating;
+    }
+    await db
+      .insert(propertyScores)
+      .values({ propertyId: id, ...ratingCols })
+      .onConflictDoUpdate({
+        target: propertyScores.propertyId,
+        set: ratingCols,
+      });
+
+    // 2. Store each rationale as the category's "why" note so the reasoning shows.
+    for (const key of CATEGORIES) {
+      const note = ratings[key].rationale?.trim();
+      if (!note) continue;
+      await db
+        .insert(scoreNotes)
+        .values({ propertyId: id, category: key, note })
+        .onConflictDoUpdate({
+          target: [scoreNotes.propertyId, scoreNotes.category],
+          set: { note },
+        });
+    }
+
+    logInfo("rate", "AI category ratings applied", {
+      id,
+      model,
+      ratings: CATEGORIES.map((k) => `${k}=${ratings[k].rating}`).join(" "),
+    });
+
+    // 3. Recompute weighted score + recommendation from the new ratings.
+    await recomputeProperty(id);
+    revalidatePath(`/properties/${id}`);
+    revalidatePath("/");
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "rating suggestion failed";
+    logError("rate", "AI rating suggestion failed", { id, error: err });
+    redirect(`/properties/${id}?error=${encodeURIComponent(msg)}`);
+  }
+}
 
 function ratingOrNull(v: FormDataEntryValue | null): number | null {
   const s = String(v ?? "").trim();

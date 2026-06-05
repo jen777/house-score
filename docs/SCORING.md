@@ -223,8 +223,28 @@ The Phase 1 implementation mirrors the formulas above:
 | Inputs defaults | `DEFAULT_INPUTS` |
 | Per-owner overrides | `scoring_config` row (`weights` + `inputs` jsonb), loaded by `getScoringConfig()` |
 | Persistence + recompute | `recomputeProperty()` in `src/lib/recompute.ts` writes `est_monthly_payment` on the property and `weighted_score` / `recommendation` on `property_scores` |
+| AI rating suggestions | `suggestCategoryRatings()` in `src/lib/ai.ts` + `suggestRatingsAction()` in `src/app/actions.ts` (the **Suggest with AI** button) |
 
-The ratings are entered (or AI-proposed, user-confirmed) on the property detail
-page; saving recomputes the derived values. The data model is described in
-`DATA_MODEL.md` (7 category ratings, `must_have_issue`, `est_monthly_payment`,
-`taxes_annual`, two commute fields, recommendation band).
+The ratings are entered manually, or proposed by AI for the user to confirm, on
+the property detail page; saving recomputes the derived values. The data model is
+described in `DATA_MODEL.md` (7 category ratings, `must_have_issue`,
+`est_monthly_payment`, `taxes_annual`, two commute fields, recommendation band).
+
+### AI rating suggestions ("Suggest with AI")
+
+The **Suggest with AI** button on the ratings card asks Claude to propose all
+seven 1–5 ratings at once, grounded in everything the app knows about the house:
+
+- the listed facts (price, beds/baths, sqft/lot/year, HOA, taxes, est. monthly,
+  commute fields) and owner notes,
+- the AI listing analysis (`property_features`),
+- the RentCast enrichment (value/rent estimates, last sale, comparables), and
+- the computed drive times to saved places,
+
+graded against the rubric above and the buyer's targets from *Weights & Inputs*
+(budget, comfortable monthly, target commutes). It writes the suggested ratings
+to `property_scores` and each one-line rationale to the category's "why" note
+(`score_notes`), then recomputes — so the form shows the AI's picks for the user
+to review, adjust, and re-save. It deliberately does **not** touch the
+`must_have_issue` gate (that hard Pass stays the user's call). Re-running
+overwrites the current ratings/notes, so it's an explicit, on-demand action.
