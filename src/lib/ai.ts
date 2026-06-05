@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
+import { logInfo, logError } from "./log";
 
 // Structured output schema for listing extraction. See docs/AI_EXTRACTION.md.
 export const extractionSchema = z.object({
@@ -120,24 +121,58 @@ export async function extractListingFeatures(
     .filter(Boolean)
     .join("\n");
 
-  const message = await client.messages.create({
+  logInfo("anthropic", "messages.create request", {
     model,
-    max_tokens: 1500,
-    system: [
-      {
-        type: "text",
-        text: SYSTEM_PROMPT,
-        // Cache the static system prompt to cut cost across many extractions.
-        cache_control: { type: "ephemeral" },
-      },
-    ],
-    tools: [TOOL],
-    tool_choice: { type: "tool", name: "record_listing_features" },
-    messages: [{ role: "user", content: context }],
+    listingChars: input.listingText.length,
+  });
+  const started = Date.now();
+
+  let message;
+  try {
+    message = await client.messages.create({
+      model,
+      max_tokens: 1500,
+      system: [
+        {
+          type: "text",
+          text: SYSTEM_PROMPT,
+          // Cache the static system prompt to cut cost across many extractions.
+          cache_control: { type: "ephemeral" },
+        },
+      ],
+      tools: [TOOL],
+      tool_choice: { type: "tool", name: "record_listing_features" },
+      messages: [{ role: "user", content: context }],
+    });
+  } catch (err) {
+    // Anthropic.APIError carries the HTTP status (401 bad key, 429 rate limit,
+    // 529 overloaded, ...) — surface it so failures aren't opaque.
+    const status = err instanceof Anthropic.APIError ? err.status : undefined;
+    logError("anthropic", "messages.create failed", {
+      model,
+      status,
+      ms: Date.now() - started,
+      error: err,
+    });
+    throw err;
+  }
+
+  logInfo("anthropic", "messages.create response", {
+    model,
+    ms: Date.now() - started,
+    stopReason: message.stop_reason,
+    inputTokens: message.usage?.input_tokens,
+    outputTokens: message.usage?.output_tokens,
+    cacheReadTokens: message.usage?.cache_read_input_tokens,
+    cacheWriteTokens: message.usage?.cache_creation_input_tokens,
   });
 
   const toolUse = message.content.find((c) => c.type === "tool_use");
   if (!toolUse || toolUse.type !== "tool_use") {
+    logError("anthropic", "model did not return structured tool output", {
+      model,
+      stopReason: message.stop_reason,
+    });
     throw new Error("Model did not return structured features");
   }
 

@@ -10,6 +10,8 @@
 // The network call (`enrichByAddress`) is kept thin; the field mapping lives in
 // the pure `normalizeRentcast` so it can be unit-tested without the API.
 
+import { logInfo, logWarn, logError } from "./log";
+
 const BASE_URL =
   process.env.RENTCAST_BASE_URL?.replace(/\/$/, "") ||
   "https://api.rentcast.io/v1";
@@ -193,19 +195,34 @@ export function normalizeRentcast(
 
 /** GET a RentCast endpoint; returns parsed JSON or throws a useful error. */
 async function get<T>(path: string, apiKey: string): Promise<T> {
-  const res = await fetch(`${BASE_URL}${path}`, {
-    headers: { "X-Api-Key": apiKey, Accept: "application/json" },
-    // Enrichment is explicit and cached in our DB; never use Next's fetch cache.
-    cache: "no-store",
-  });
+  const endpoint = path.split("?")[0];
+  const started = Date.now();
+  let res: Response;
+  try {
+    res = await fetch(`${BASE_URL}${path}`, {
+      headers: { "X-Api-Key": apiKey, Accept: "application/json" },
+      // Enrichment is explicit and cached in our DB; never use Next's fetch cache.
+      cache: "no-store",
+    });
+  } catch (err) {
+    logError("rentcast", "network error", { endpoint, error: err });
+    throw err;
+  }
   if (!res.ok) {
     const body = await res.text().catch(() => "");
+    logError("rentcast", "HTTP error", {
+      endpoint,
+      status: res.status,
+      ms: Date.now() - started,
+      body: body ? body.slice(0, 200) : undefined,
+    });
     throw new Error(
-      `RentCast ${path.split("?")[0]} failed (${res.status})${
+      `RentCast ${endpoint} failed (${res.status})${
         body ? `: ${body.slice(0, 200)}` : ""
       }`,
     );
   }
+  logInfo("rentcast", "ok", { endpoint, status: res.status, ms: Date.now() - started });
   return (await res.json()) as T;
 }
 
@@ -222,11 +239,13 @@ export async function enrichByAddress(
   if (!apiKey) throw new Error("RENTCAST_API_KEY is not configured");
 
   const q = `address=${encodeURIComponent(address)}`;
+  logInfo("rentcast", "enrich by address", { address });
 
   // /properties returns an array; take the first (best) match.
   const records = await get<RentcastRecord[]>(`/properties?${q}`, apiKey);
   const record = Array.isArray(records) ? records[0] ?? null : null;
   if (!record) {
+    logWarn("rentcast", "no property record found", { address });
     throw new Error(`RentCast found no property record for "${address}"`);
   }
 
@@ -234,7 +253,12 @@ export async function enrichByAddress(
     try {
       return await get<RentcastAvm>(path, apiKey);
     } catch {
-      return null; // AVM/rent unavailable for this address — not fatal.
+      // AVM/rent unavailable for this address — not fatal (get() already
+      // logged the underlying HTTP/network failure).
+      logWarn("rentcast", "optional AVM endpoint unavailable", {
+        endpoint: path.split("?")[0],
+      });
+      return null;
     }
   };
 
@@ -243,5 +267,10 @@ export async function enrichByAddress(
     optional(`/avm/rent/long-term?${q}`),
   ]);
 
+  logInfo("rentcast", "enrichment complete", {
+    address,
+    hasValue: value?.price != null,
+    hasRent: rent?.rent != null,
+  });
   return normalizeRentcast(record, value, rent);
 }
