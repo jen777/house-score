@@ -62,8 +62,8 @@ the Add-house page and "Import from Redfin link" pulls a full property record vi
 - **We do not scrape Redfin.** RealtyAPI is the third-party provider; our app only
   calls RealtyAPI server-side (the pasted Redfin URL is the lookup key) and stores
   what it returns. This keeps the "no direct portal scraping" rule intact.
-- Endpoint: `GET /redfin/detailsByUrl?url=<redfin url>` with the
-  `x-realtyapi-key` header. `src/lib/realtyapi.ts` keeps the network call thin;
+- Endpoint: `GET https://redfin.realtyapi.io/detailsbyurl?property_url=<redfin url>`
+  with the `x-realtyapi-key` header. `src/lib/realtyapi.ts` keeps the call thin;
   the field mapping lives in the pure, defensively-written `normalizeRedfin`
   (reads many candidate field names and tolerates nesting), and the raw payload
   is kept for traceability.

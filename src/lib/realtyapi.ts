@@ -6,8 +6,8 @@
 // estate data API; we call it server-side and store what it returns (see
 // docs/DATA_SOURCES.md). The pasted Redfin link is the lookup key.
 //
-// Endpoint used (Redfin namespace):
-//   GET /redfin/detailsByUrl?url=<redfin property url>   full property details
+// Endpoint used:
+//   GET https://redfin.realtyapi.io/detailsbyurl?property_url=<redfin property url>
 //
 // The exact response shape can vary, so — like the RentCast client — the network
 // call is kept thin and the field mapping lives in the pure `normalizeRedfin`,
@@ -19,7 +19,7 @@ import { logInfo, logWarn, logError } from "./log";
 
 const BASE_URL =
   process.env.REALTYAPI_BASE_URL?.replace(/\/$/, "") ||
-  "https://api.realtyapi.io";
+  "https://redfin.realtyapi.io";
 
 const SQFT_PER_ACRE = 43560;
 
@@ -250,8 +250,8 @@ export async function fetchRedfinByUrl(url: string): Promise<RedfinImport> {
     throw new Error("Enter a valid Redfin property URL (redfin.com/...)");
   }
 
-  const endpoint = "/redfin/detailsByUrl";
-  const path = `${endpoint}?url=${encodeURIComponent(url.trim())}`;
+  const endpoint = "/detailsbyurl";
+  const path = `${endpoint}?property_url=${encodeURIComponent(url.trim())}`;
   const started = Date.now();
   logInfo("realtyapi", "fetch Redfin details by url", { url });
 
