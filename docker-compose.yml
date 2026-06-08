@@ -38,6 +38,9 @@ services:
       # Optional: RentCast key enables the "Enrich from RentCast" property-data action.
       RENTCAST_API_KEY: ${RENTCAST_API_KEY:-}
       RENTCAST_BASE_URL: ${RENTCAST_BASE_URL:-https://api.rentcast.io/v1}
+      # Optional: RealtyAPI key enables "Import from Redfin link" on the Add-house page.
+      REALTYAPI_API_KEY: ${REALTYAPI_API_KEY:-}
+      REALTYAPI_BASE_URL: ${REALTYAPI_BASE_URL:-https://api.realtyapi.io}
     expose:
       - "3000"
     healthcheck:
