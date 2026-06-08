@@ -9,11 +9,12 @@
 // Endpoint used:
 //   GET https://redfin.realtyapi.io/detailsbyurl?property_url=<redfin property url>
 //
-// The exact response shape can vary, so — like the RentCast client — the network
-// call is kept thin and the field mapping lives in the pure `normalizeRedfin`,
-// which reads defensively from many candidate field names and tolerates nesting.
-// The base URL and key are env-driven so they can be corrected without a code
-// change (REALTYAPI_BASE_URL / REALTYAPI_API_KEY).
+// The network call is kept thin; the field mapping lives in the pure
+// `normalizeRedfin`, which reads RealtyAPI's nested Redfin shape
+// (details.aboveTheFold = listing/marketing, details.belowTheFold.publicRecordsInfo
+// = county records) and tolerates missing branches. The base URL and key are
+// env-driven so they can be corrected without a code change
+// (REALTYAPI_BASE_URL / REALTYAPI_API_KEY).
 
 import { logInfo, logWarn, logError } from "./log";
 
@@ -80,59 +81,10 @@ function str(v: unknown): string | null {
   return s === "" ? null : s;
 }
 
-/**
- * Candidate "roots" to read fields from: the payload itself plus the common
- * wrapper objects RealtyAPI / Redfin nest details under. Reading across all of
- * them lets `pick` find a field wherever it lives without us hard-coding one
- * exact schema.
- */
-function roots(raw: unknown): Record<string, unknown>[] {
-  const out: Record<string, unknown>[] = [];
-  const add = (v: unknown) => {
-    if (v && typeof v === "object" && !Array.isArray(v)) {
-      out.push(v as Record<string, unknown>);
-    }
-  };
-  add(raw);
-  const top = (raw ?? {}) as Record<string, unknown>;
-  for (const key of [
-    "data",
-    "result",
-    "property",
-    "home",
-    "listing",
-    "details",
-    "propertyDetails",
-    "homeInfo",
-    "aboveTheFold",
-    "belowTheFold",
-    "addressInfo",
-    "address",
-  ]) {
-    add(top[key]);
-  }
-  // One level deeper for the most common wrappers.
-  for (const key of ["data", "result", "property", "home"]) {
-    const inner = top[key] as Record<string, unknown> | undefined;
-    if (inner && typeof inner === "object") {
-      for (const k2 of ["property", "home", "details", "propertyDetails"]) {
-        add(inner[k2]);
-      }
-    }
-  }
-  return out;
-}
+/* eslint-disable @typescript-eslint/no-explicit-any */
+type Obj = Record<string, any>;
 
-/** First non-null value found across the candidate roots for any of `keys`. */
-function pick(rs: Record<string, unknown>[], keys: string[]): unknown {
-  for (const r of rs) {
-    for (const k of keys) {
-      const v = r[k];
-      if (v != null && v !== "") return v;
-    }
-  }
-  return undefined;
-}
+const obj = (v: unknown): Obj => (v && typeof v === "object" ? (v as Obj) : {});
 
 /** Map a free-text Redfin property type onto our three known keys. */
 function mapPropertyType(v: unknown): string | null {
@@ -152,89 +104,124 @@ function mapPropertyType(v: unknown): string | null {
   return s;
 }
 
+/** Leading integer from strings like "705000_US_DOLLAR" or "$705,000". */
+function leadingNumber(v: unknown): number | null {
+  if (v == null) return null;
+  const m = String(v).replace(/[$,]/g, "").match(/-?\d+(\.\d+)?/);
+  return m ? Number(m[0]) : null;
+}
+
+/** "3,000 sq ft" → acres; "0.72 Acres" → acres. */
+function lotTextToAcres(text: unknown): number | null {
+  const s = str(text);
+  if (!s) return null;
+  const n = leadingNumber(s);
+  if (n == null) return null;
+  return /acre/i.test(s) ? n : Math.round((n / SQFT_PER_ACRE) * 100) / 100;
+}
+
+/** Pull the subject lat/lng out of a WalkScore deep-link, e.g. ".../lat=40.7/lng=-73.7?..." */
+function latLngFromWalkScore(link: unknown): { lat: number | null; lng: number | null } {
+  const s = str(link);
+  if (!s) return { lat: null, lng: null };
+  const lat = s.match(/lat=(-?\d+(?:\.\d+)?)/);
+  const lng = s.match(/lng=(-?\d+(?:\.\d+)?)/);
+  return { lat: lat ? Number(lat[1]) : null, lng: lng ? Number(lng[1]) : null };
+}
+
+/** Build a street address from Redfin's structured propertyAddress parts. */
+function buildStreet(a: Obj): string | null {
+  const parts = [
+    a.streetNumber,
+    a.directionalPrefix,
+    a.streetName,
+    a.streetType,
+    a.directionalSuffix,
+  ]
+    .map((p) => str(p))
+    .filter(Boolean);
+  const base = parts.join(" ").trim();
+  const unit = str(a.unitValue)
+    ? `${str(a.unitType) || "Unit"} ${str(a.unitValue)}`
+    : "";
+  return [base, unit].filter(Boolean).join(" ") || null;
+}
+
 /**
- * Pure mapping from a RealtyAPI Redfin payload to the fields the app stores.
- * Defensive by design (reads many candidate names, tolerates nesting) so a minor
- * schema change doesn't drop data. Kept separate from the network call so it can
- * be unit-tested with fixtures.
+ * Pure mapping from RealtyAPI's Redfin `detailsbyurl` payload to the fields the
+ * app stores. The response nests data under `details.aboveTheFold` (listing /
+ * marketing) and `details.belowTheFold.publicRecordsInfo` (county records), so we
+ * read the authoritative public record first and fall back to the listing. Kept
+ * separate from the network call so it can be tested with fixtures.
  */
 export function normalizeRedfin(raw: unknown): RedfinListing {
-  const rs = roots(raw);
+  const root = obj(raw);
+  const details = obj(root.details ?? root);
+  const atf = obj(details.aboveTheFold);
+  const btf = obj(details.belowTheFold);
+  const main = obj(atf.mainHouseInfo);
+  const panelMain = obj(obj(details.mainHouseInfoPanelInfo).mainHouseInfo);
 
-  const lotAcresDirect = num(
-    pick(rs, ["lotSizeAcres", "lotAcres", "lotSizeInAcres"]),
+  const pub = obj(btf.publicRecordsInfo);
+  const basic = obj(pub.basicInfo);
+  const latest = obj(pub.latestListingInfo);
+  const taxInfo = obj(pub.taxInfo);
+  const pubAddr = obj(pub.addressInfo);
+  const addr = obj(main.propertyAddress ?? panelMain.propertyAddress);
+
+  // selectedAmenities is a flat [{header, content}] list (Style, MLS#, Built…).
+  const amenity: Record<string, string> = {};
+  for (const a of (main.selectedAmenities ?? []) as Obj[]) {
+    const h = str(a?.header);
+    const c = str(a?.content);
+    if (h && c) amenity[h.toLowerCase()] = c;
+  }
+
+  const description =
+    str(obj((main.marketingRemarks ?? [])[0]).marketingRemark) ??
+    str(obj((panelMain.marketingRemarks ?? [])[0]).marketingRemark);
+
+  const street =
+    str(panelMain.streetAddress) ?? buildStreet(addr) ?? str(pubAddr.street);
+
+  const { lat, lng } = latLngFromWalkScore(
+    obj(obj(obj(details.neighborhoodStats).walkScoreData).walkScore).link,
   );
-  const lotSqft = num(pick(rs, ["lotSqFt", "lotSize", "lotSizeSqFt", "lotSizeSquareFeet"]));
+
+  // Lot: prefer the numeric public record, else parse the amenity text.
+  const lotSqft = num(basic.lotSqFt ?? latest.lotSqFt);
   const lotAcres =
-    lotAcresDirect != null
-      ? lotAcresDirect
-      : lotSqft != null
-        ? Math.round((lotSqft / SQFT_PER_ACRE) * 100) / 100
-        : null;
+    lotSqft != null
+      ? Math.round((lotSqft / SQFT_PER_ACRE) * 100) / 100
+      : lotTextToAcres(amenity["lot size"]);
+
+  // Price: the listing price (e.g. "705000_US_DOLLAR"); fall back to last sold.
+  const price =
+    leadingNumber(obj(details.customerConversionInfo).listingPrice) ??
+    leadingNumber(obj(details.agenInfo).listingPrice) ??
+    num(obj(obj(obj(details.avm).__root).avmInfo).lastSoldPrice);
 
   return {
-    address: str(
-      pick(rs, [
-        "streetAddress",
-        "streetLine",
-        "addressLine1",
-        "line1",
-        "fullAddress",
-        "formattedAddress",
-        "address",
-      ]),
-    ),
-    city: str(pick(rs, ["city", "addressCity"])),
-    state: str(pick(rs, ["state", "stateCode", "addressState", "stateOrProvince"])),
-    zip: str(pick(rs, ["zip", "zipCode", "postalCode", "zipcode"])),
-    latitude: num(pick(rs, ["latitude", "lat"])),
-    longitude: num(pick(rs, ["longitude", "lng", "lon", "long"])),
+    address: street,
+    city: str(addr.city ?? pubAddr.city),
+    state: str(addr.stateOrProvinceCode ?? pubAddr.state),
+    zip: str(addr.postalCode ?? pubAddr.zip),
+    latitude: lat,
+    longitude: lng,
     propertyType: mapPropertyType(
-      pick(rs, ["propertyType", "homeType", "type", "propertyTypeName"]),
+      basic.propertyTypeName ?? latest.propertyTypeName ?? amenity["property type"],
     ),
-    price: num(
-      pick(rs, ["price", "listPrice", "listingPrice", "currentPrice", "askingPrice"]),
-    ),
-    beds: num(pick(rs, ["beds", "numBeds", "bedrooms", "bed", "numBedrooms"])),
-    baths: num(pick(rs, ["baths", "numBaths", "bathrooms", "bath", "numBathrooms"])),
-    sqft: num(
-      pick(rs, [
-        "sqFt",
-        "sqft",
-        "squareFeet",
-        "squareFootage",
-        "livingArea",
-        "finishedSqFt",
-      ]),
-    ),
+    price,
+    beds: num(latest.beds ?? basic.beds),
+    baths: num(latest.baths ?? basic.baths),
+    sqft: num(basic.totalSqFt ?? latest.sqFt ?? basic.sqFtFinished),
     lotAcres,
-    yearBuilt: num(pick(rs, ["yearBuilt", "year_built", "yearbuilt"])),
-    hoaMonthly: num(
-      pick(rs, ["hoaMonthly", "hoaDues", "hoaFee", "hoa", "monthlyHoaFee", "associationFee"]),
-    ),
-    taxesAnnual: num(
-      pick(rs, [
-        "taxesAnnual",
-        "annualTax",
-        "propertyTaxes",
-        "taxAnnualAmount",
-        "annualTaxAmount",
-        "taxes",
-      ]),
-    ),
-    daysOnMarket: num(pick(rs, ["daysOnMarket", "dom", "timeOnRedfin", "daysOnRedfin"])),
-    mlsNumber: str(pick(rs, ["mlsId", "mlsNumber", "mls", "mlsNum"])),
-    description: str(
-      pick(rs, [
-        "listingRemarks",
-        "publicRemarks",
-        "marketingRemarks",
-        "remarks",
-        "description",
-        "homeDescription",
-        "listingDescription",
-      ]),
-    ),
+    yearBuilt: num(basic.yearBuilt ?? latest.yearBuilt ?? amenity["built"]),
+    hoaMonthly: num(main.monthlyHoaDues ?? main.hoaDues),
+    taxesAnnual: num(taxInfo.taxesDue),
+    daysOnMarket: null,
+    mlsNumber: str(main.mlsId ?? panelMain.mlsId ?? amenity["mls#"]),
+    description,
   };
 }
 
