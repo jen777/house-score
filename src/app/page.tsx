@@ -1,7 +1,8 @@
 import Link from "next/link";
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, isNull, isNotNull } from "drizzle-orm";
 import { db } from "@/db";
 import { properties, propertyScores } from "@/db/schema";
+import { archivePropertyAction } from "./actions";
 import {
   STATUS_LABEL,
   STATUS_CLASS,
@@ -29,7 +30,15 @@ export default async function HomePage() {
     })
     .from(properties)
     .leftJoin(propertyScores, eq(properties.id, propertyScores.propertyId))
+    .where(isNull(properties.archivedAt))
     .orderBy(desc(propertyScores.weightedScore));
+
+  // Count archived houses so we can surface a link to the Archived list.
+  const archivedRows = await db
+    .select({ id: properties.id })
+    .from(properties)
+    .where(isNotNull(properties.archivedAt));
+  const archivedCount = archivedRows.length;
 
   // Sort: scored first (desc), then unscored.
   const sorted = [...rows].sort((a, b) => {
@@ -60,7 +69,14 @@ export default async function HomePage() {
     <div>
       <div className="mb-4 flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Houses</h1>
-        <p className="text-sm text-slate-500">{sorted.length} tracked</p>
+        <div className="flex items-center gap-3 text-sm text-slate-500">
+          <span>{sorted.length} tracked</span>
+          {archivedCount > 0 ? (
+            <Link href="/archived" className="hover:text-brand">
+              Archived ({archivedCount})
+            </Link>
+          ) : null}
+        </div>
       </div>
 
       {sorted.length > 0 ? (
@@ -91,6 +107,7 @@ export default async function HomePage() {
                 <th className="px-4 py-2 font-medium">Status</th>
                 <th className="px-4 py-2 font-medium">Price</th>
                 <th className="px-4 py-2 font-medium">Est. monthly</th>
+                <th className="px-4 py-2 font-medium"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -132,6 +149,17 @@ export default async function HomePage() {
                   </td>
                   <td className="px-4 py-2">{fmtMoney(r.price)}</td>
                   <td className="px-4 py-2">{fmtMoney(r.estMonthly)}</td>
+                  <td className="px-4 py-2 text-right">
+                    <form action={archivePropertyAction}>
+                      <input type="hidden" name="id" value={r.id} />
+                      <button
+                        className="text-xs text-slate-400 hover:text-amber-700"
+                        title="Archive — hide from list, comparison, and map (restore anytime)"
+                      >
+                        Archive
+                      </button>
+                    </form>
+                  </td>
                 </tr>
               ))}
             </tbody>

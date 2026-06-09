@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS properties (
   must_have_issue       text DEFAULT 'No',
   property_type         text,
   listing_description   text,
+  archived_at           timestamptz,
   created_at            timestamptz DEFAULT now(),
   updated_at            timestamptz DEFAULT now()
 );
@@ -62,6 +63,7 @@ ALTER TABLE properties ADD COLUMN IF NOT EXISTS access_notes          text;
 ALTER TABLE properties ADD COLUMN IF NOT EXISTS amenities_notes       text;
 ALTER TABLE properties ADD COLUMN IF NOT EXISTS risks_red_flags       text;
 ALTER TABLE properties ADD COLUMN IF NOT EXISTS must_have_issue       text DEFAULT 'No';
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS archived_at           timestamptz;
 
 CREATE TABLE IF NOT EXISTS property_scores (
   property_id           uuid PRIMARY KEY REFERENCES properties(id) ON DELETE CASCADE,
@@ -192,6 +194,7 @@ CREATE TABLE IF NOT EXISTS property_enrichment (
 );
 
 CREATE INDEX IF NOT EXISTS idx_properties_status ON properties(status);
+CREATE INDEX IF NOT EXISTS idx_properties_archived_at ON properties(archived_at);
 CREATE INDEX IF NOT EXISTS idx_notes_property ON property_notes(property_id);
 CREATE INDEX IF NOT EXISTS idx_provenance_property ON property_field_provenance(property_id);
 CREATE INDEX IF NOT EXISTS idx_drive_times_property ON property_drive_times(property_id);

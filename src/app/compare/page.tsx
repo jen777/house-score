@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, isNull } from "drizzle-orm";
 import { db } from "@/db";
 import { properties, propertyScores } from "@/db/schema";
 import { CATEGORIES, CATEGORY_LABEL, type CategoryKey } from "@/lib/scoring";
@@ -27,7 +27,8 @@ export default async function ComparePage({
   const fromIds = (sp.ids ?? "").split(",").filter(Boolean);
   const all = await db
     .select({ id: properties.id, address: properties.address })
-    .from(properties);
+    .from(properties)
+    .where(isNull(properties.archivedAt));
 
   const selectedIds = [...new Set([...fromId, ...fromIds])].slice(0, 4);
 

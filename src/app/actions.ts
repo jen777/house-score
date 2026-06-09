@@ -325,6 +325,36 @@ export async function deletePropertyAction(formData: FormData) {
   redirect("/");
 }
 
+/**
+ * Archive a house: hide it from the main list, comparison, and map (e.g. it sold
+ * before you could act). It stays in the DB and shows on the Archived page, where
+ * it can be restored. Non-destructive — use deletePropertyAction to remove for good.
+ */
+export async function archivePropertyAction(formData: FormData) {
+  const id = String(formData.get("id"));
+  await db
+    .update(properties)
+    .set({ archivedAt: new Date(), updatedAt: new Date() })
+    .where(eq(properties.id, id));
+  revalidatePath("/");
+  revalidatePath("/archived");
+  revalidatePath(`/properties/${id}`);
+  redirect("/archived");
+}
+
+/** Restore an archived house back to the active list. */
+export async function unarchivePropertyAction(formData: FormData) {
+  const id = String(formData.get("id"));
+  await db
+    .update(properties)
+    .set({ archivedAt: null, updatedAt: new Date() })
+    .where(eq(properties.id, id));
+  revalidatePath("/");
+  revalidatePath("/archived");
+  revalidatePath(`/properties/${id}`);
+  redirect(`/properties/${id}`);
+}
+
 export async function updateStatusAction(formData: FormData) {
   const id = String(formData.get("id"));
   const status = String(formData.get("status"));

@@ -41,6 +41,8 @@ import {
 import {
   updatePropertyAction,
   deletePropertyAction,
+  archivePropertyAction,
+  unarchivePropertyAction,
   updateStatusAction,
   extractAction,
   enrichPropertyAction,
@@ -148,6 +150,22 @@ export default async function PropertyPage({
         <p className="rounded bg-red-50 px-3 py-2 text-sm text-red-700">
           {ERROR_MESSAGE[error] ?? decodeURIComponent(error)}
         </p>
+      ) : null}
+
+      {prop.archivedAt ? (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          <span>
+            This house is archived
+            {prop.archivedAt
+              ? ` (${new Date(prop.archivedAt).toLocaleDateString()})`
+              : ""}{" "}
+            — hidden from the main list, comparison, and map.
+          </span>
+          <form action={unarchivePropertyAction}>
+            <input type="hidden" name="id" value={prop.id} />
+            <button className="btn-ghost py-1">Restore to active</button>
+          </form>
+        </div>
       ) : null}
 
       {/* Header */}
@@ -637,8 +655,25 @@ export default async function PropertyPage({
         </ul>
       </section>
 
-      {/* Danger zone */}
-      <section className="card border-red-200">
+      {/* Archive + danger zone */}
+      <section className="card flex flex-wrap items-center gap-3 border-red-200">
+        {prop.archivedAt ? (
+          <form action={unarchivePropertyAction}>
+            <input type="hidden" name="id" value={prop.id} />
+            <button className="btn-ghost">Restore to active list</button>
+          </form>
+        ) : (
+          <form action={archivePropertyAction}>
+            <input type="hidden" name="id" value={prop.id} />
+            <button
+              className="btn-ghost"
+              title="Hide from the main list, comparison, and map. Keeps all data; restore anytime."
+            >
+              Archive house
+            </button>
+          </form>
+        )}
+        <span className="grow" />
         <form action={deletePropertyAction}>
           <input type="hidden" name="id" value={prop.id} />
           <button className="btn-ghost border-red-300 text-red-600 hover:bg-red-50">

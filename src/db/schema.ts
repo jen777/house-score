@@ -48,6 +48,9 @@ export const properties = pgTable("properties", {
   mustHaveIssue: text("must_have_issue").default("No"), // Yes|No|Maybe
   propertyType: text("property_type"),
   listingDescription: text("listing_description"),
+  // Archived houses (e.g. sold/gone) are hidden from the main list, comparison,
+  // and map but kept for review on the Archived page. Null = active.
+  archivedAt: timestamp("archived_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
 });

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { eq, isNotNull, and } from "drizzle-orm";
+import { eq, isNotNull, isNull, and } from "drizzle-orm";
 import { db } from "@/db";
 import { properties, propertyScores } from "@/db/schema";
 import MapView, { type MapMarker } from "./MapView";
@@ -25,7 +25,11 @@ export default async function MapPage() {
     .from(properties)
     .leftJoin(propertyScores, eq(properties.id, propertyScores.propertyId))
     .where(
-      and(isNotNull(properties.latitude), isNotNull(properties.longitude)),
+      and(
+        isNotNull(properties.latitude),
+        isNotNull(properties.longitude),
+        isNull(properties.archivedAt),
+      ),
     );
 
   const markers: MapMarker[] = rows.map((r) => ({
@@ -40,8 +44,11 @@ export default async function MapPage() {
     price: r.price,
   }));
 
-  // How many saved properties don't have coordinates yet.
-  const total = await db.select({ id: properties.id }).from(properties);
+  // How many active (non-archived) properties don't have coordinates yet.
+  const total = await db
+    .select({ id: properties.id })
+    .from(properties)
+    .where(isNull(properties.archivedAt));
   const missing = total.length - markers.length;
 
   return (

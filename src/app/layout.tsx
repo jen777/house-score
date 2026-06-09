@@ -35,6 +35,9 @@ export default function RootLayout({
                 <Link href="/places" className="hover:text-brand">
                   Places
                 </Link>
+                <Link href="/archived" className="hover:text-brand">
+                  Archived
+                </Link>
                 <Link href="/properties/new" className="btn">
                   + Add house
                 </Link>
