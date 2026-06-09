@@ -545,7 +545,14 @@ export default async function PropertyPage({
           <Fact label="HOA/mo" value={fmtMoney(prop.hoaMonthly)} prov={provMap.get("hoa_monthly")} />
           <Fact label="Taxes/yr" value={fmtMoney(prop.taxesAnnual)} prov={provMap.get("taxes_annual")} />
           <Fact label="Days on market" value={fmtNum(prop.daysOnMarket)} />
-          <Fact label="School rating" value={fmtNum(prop.schoolRating)} />
+          <Fact
+            label="School rating (avg)"
+            value={fmtNum(prop.schoolRating, "/10")}
+            prov={provMap.get("school_rating")}
+          />
+          <Fact label="Elementary" value={fmtNum(prop.schoolElementary, "/10")} />
+          <Fact label="Middle school" value={fmtNum(prop.schoolMiddle, "/10")} />
+          <Fact label="High school" value={fmtNum(prop.schoolHigh, "/10")} />
           <Fact label="Type" value={prop.propertyType ?? "—"} prov={provMap.get("property_type")} />
           <Fact label="→ Salisbury" value={fmtNum(prop.commuteSalisburyMin, " min")} />
           <Fact label="→ Charlotte" value={fmtNum(prop.commuteCharlotteMin, " min")} />
@@ -589,7 +596,10 @@ export default async function PropertyPage({
               <Field name="hoaMonthly" label="HOA/mo" type="number" defaultValue={prop.hoaMonthly ?? ""} />
               <Field name="taxesAnnual" label="Taxes/yr" type="number" defaultValue={prop.taxesAnnual ?? ""} />
               <Field name="daysOnMarket" label="Days on market" type="number" defaultValue={prop.daysOnMarket ?? ""} />
-              <Field name="schoolRating" label="School rating" type="number" defaultValue={prop.schoolRating ?? ""} />
+              <Field name="schoolRating" label="School rating (0–10)" type="number" defaultValue={prop.schoolRating ?? ""} />
+              <Field name="schoolElementary" label="Elementary (0–10)" type="number" defaultValue={prop.schoolElementary ?? ""} />
+              <Field name="schoolMiddle" label="Middle (0–10)" type="number" defaultValue={prop.schoolMiddle ?? ""} />
+              <Field name="schoolHigh" label="High (0–10)" type="number" defaultValue={prop.schoolHigh ?? ""} />
               <Field name="commuteSalisburyMin" label="→ Salisbury (min)" type="number" defaultValue={prop.commuteSalisburyMin ?? ""} />
               <Field name="commuteCharlotteMin" label="→ Charlotte (min)" type="number" defaultValue={prop.commuteCharlotteMin ?? ""} />
               <Field name="propertyType" label="Type" defaultValue={prop.propertyType ?? ""} />

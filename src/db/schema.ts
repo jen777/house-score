@@ -39,7 +39,10 @@ export const properties = pgTable("properties", {
   taxesAnnual: numeric("taxes_annual"),
   estMonthlyPayment: numeric("est_monthly_payment"),
   daysOnMarket: integer("days_on_market"),
-  schoolRating: numeric("school_rating"),
+  schoolRating: numeric("school_rating"), // overall avg of the level ratings (0–10)
+  schoolElementary: numeric("school_elementary"), // GreatSchools avg, 0–10
+  schoolMiddle: numeric("school_middle"),
+  schoolHigh: numeric("school_high"),
   commuteSalisburyMin: integer("commute_salisbury_min"),
   commuteCharlotteMin: integer("commute_charlotte_min"),
   accessNotes: text("access_notes"),

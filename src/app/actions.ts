@@ -108,6 +108,9 @@ function propertyFieldsFromForm(formData: FormData) {
     taxesAnnual: strOrNull(formData.get("taxesAnnual")),
     daysOnMarket: intOrNull(formData.get("daysOnMarket")),
     schoolRating: strOrNull(formData.get("schoolRating")),
+    schoolElementary: strOrNull(formData.get("schoolElementary")),
+    schoolMiddle: strOrNull(formData.get("schoolMiddle")),
+    schoolHigh: strOrNull(formData.get("schoolHigh")),
     commuteSalisburyMin: intOrNull(formData.get("commuteSalisburyMin")),
     commuteCharlotteMin: intOrNull(formData.get("commuteCharlotteMin")),
     accessNotes: strOrNull(formData.get("accessNotes")),
@@ -219,6 +222,10 @@ export async function createFromRedfinAction(formData: FormData) {
       hoaMonthly: numStr(listing!.hoaMonthly),
       taxesAnnual: numStr(listing!.taxesAnnual),
       daysOnMarket: intRound(listing!.daysOnMarket),
+      schoolRating: numStr(listing!.schoolRating),
+      schoolElementary: numStr(listing!.schoolElementary),
+      schoolMiddle: numStr(listing!.schoolMiddle),
+      schoolHigh: numStr(listing!.schoolHigh),
       mlsNumber: listing!.mlsNumber,
       listingDescription: listing!.description,
     })
@@ -236,6 +243,7 @@ export async function createFromRedfinAction(formData: FormData) {
     { field: "hoa_monthly", value: listing!.hoaMonthly },
     { field: "taxes_annual", value: listing!.taxesAnnual },
     { field: "property_type", value: listing!.propertyType },
+    { field: "school_rating", value: listing!.schoolRating },
     { field: "mls_number", value: listing!.mlsNumber },
   ];
   for (const p of provFields) {
@@ -672,9 +680,16 @@ function buildRatingDossier(args: {
     prop.daysOnMarket != null ? String(prop.daysOnMarket) : null,
   );
   push(
-    "School rating",
+    "School rating (GreatSchools avg, 0–10)",
     prop.schoolRating != null ? String(prop.schoolRating) : null,
   );
+  const schoolLevels = [
+    prop.schoolElementary != null ? `elementary ${prop.schoolElementary}` : null,
+    prop.schoolMiddle != null ? `middle ${prop.schoolMiddle}` : null,
+    prop.schoolHigh != null ? `high ${prop.schoolHigh}` : null,
+  ].filter(Boolean);
+  if (schoolLevels.length)
+    push("Schools by level (0–10)", schoolLevels.join(", "));
   push(
     "Commute → Salisbury office",
     prop.commuteSalisburyMin != null ? `${prop.commuteSalisburyMin} min` : null,

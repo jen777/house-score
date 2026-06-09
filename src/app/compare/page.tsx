@@ -122,6 +122,8 @@ export default async function ComparePage({
               <Row label="Sq ft" cells={selected.map((s) => fmtNum(s.properties.sqft))} />
               <Row label="Year built" cells={selected.map((s) => fmtNum(s.properties.yearBuilt))} />
               <Row label="HOA/mo" cells={selected.map((s) => fmtMoney(s.properties.hoaMonthly))} />
+              <Row label="Schools (avg /10)" cells={selected.map((s) => fmtNum(s.properties.schoolRating, "/10"))} />
+              <Row label="Elem / Mid / High" cells={selected.map((s) => `${fmtNum(s.properties.schoolElementary)} / ${fmtNum(s.properties.schoolMiddle)} / ${fmtNum(s.properties.schoolHigh)}`)} />
               <Row label="→ Salisbury" cells={selected.map((s) => fmtNum(s.properties.commuteSalisburyMin, " min"))} />
               <Row label="→ Charlotte" cells={selected.map((s) => fmtNum(s.properties.commuteCharlotteMin, " min"))} />
 

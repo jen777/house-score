@@ -58,6 +58,12 @@ export interface RedfinListing {
   hoaMonthly: number | null;
   taxesAnnual: number | null;
   daysOnMarket: number | null;
+  // School ratings on the GreatSchools 0–10 scale (averaged across the schools
+  // serving this home, per level). schoolRating is the overall average.
+  schoolRating: number | null;
+  schoolElementary: number | null;
+  schoolMiddle: number | null;
+  schoolHigh: number | null;
   mlsNumber: string | null;
   description: string | null;
 }
@@ -164,6 +170,23 @@ function latLngFromWalkScore(link: unknown): { lat: number | null; lng: number |
   return { lat: lat ? Number(lat[1]) : null, lng: lng ? Number(lng[1]) : null };
 }
 
+/**
+ * Average GreatSchools rating (0–10) for one level's school list (elementary /
+ * middle / high). Prefers the school(s) that actually serve this home; if none
+ * are flagged, falls back to every rated school in the list. Rounds to 1 dp.
+ */
+function avgSchoolRating(list: unknown): number | null {
+  const arr = Array.isArray(list) ? (list as Obj[]) : [];
+  const rated = arr
+    .map((s) => ({ serves: s?.servesHome === true, rating: num(s?.greatSchoolsRating) }))
+    .filter((s): s is { serves: boolean; rating: number } => s.rating != null);
+  if (!rated.length) return null;
+  const serving = rated.filter((s) => s.serves);
+  const pick = serving.length ? serving : rated;
+  const avg = pick.reduce((sum, s) => sum + s.rating, 0) / pick.length;
+  return Math.round(avg * 10) / 10;
+}
+
 /** Build a street address from Redfin's structured propertyAddress parts. */
 function buildStreet(a: Obj): string | null {
   const parts = [
@@ -236,6 +259,19 @@ export function normalizeRedfin(raw: unknown): RedfinListing {
       ? Math.round((lotSqft / SQFT_PER_ACRE) * 100) / 100
       : lotTextToAcres(amenity["lot size"]);
 
+  // Schools: average the GreatSchools rating per level (serving-home first),
+  // then take the overall average of whatever levels we have.
+  const schools = obj(btf.schoolsInfo);
+  const schoolElementary = avgSchoolRating(schools.elementarySchools);
+  const schoolMiddle = avgSchoolRating(schools.middleSchools);
+  const schoolHigh = avgSchoolRating(schools.highSchools);
+  const levels = [schoolElementary, schoolMiddle, schoolHigh].filter(
+    (v): v is number => v != null,
+  );
+  const schoolRating = levels.length
+    ? Math.round((levels.reduce((a, b) => a + b, 0) / levels.length) * 10) / 10
+    : null;
+
   // Price: the listing price (e.g. "705000_US_DOLLAR"); fall back to last sold.
   const price =
     leadingNumber(obj(details.customerConversionInfo).listingPrice) ??
@@ -266,6 +302,10 @@ export function normalizeRedfin(raw: unknown): RedfinListing {
       num(main.monthlyHoaDues ?? main.hoaDues),
     taxesAnnual: num(taxInfo.taxesDue),
     daysOnMarket: null,
+    schoolRating,
+    schoolElementary,
+    schoolMiddle,
+    schoolHigh,
     mlsNumber: str(main.mlsId ?? panelMain.mlsId ?? amenity["mls#"]),
     description,
   };

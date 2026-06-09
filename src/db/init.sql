@@ -34,6 +34,9 @@ CREATE TABLE IF NOT EXISTS properties (
   est_monthly_payment   numeric,
   days_on_market        integer,
   school_rating         numeric,
+  school_elementary     numeric,
+  school_middle         numeric,
+  school_high           numeric,
   commute_salisbury_min integer,
   commute_charlotte_min integer,
   access_notes          text,
@@ -63,6 +66,9 @@ ALTER TABLE properties ADD COLUMN IF NOT EXISTS amenities_notes       text;
 ALTER TABLE properties ADD COLUMN IF NOT EXISTS risks_red_flags       text;
 ALTER TABLE properties ADD COLUMN IF NOT EXISTS must_have_issue       text DEFAULT 'No';
 ALTER TABLE properties ADD COLUMN IF NOT EXISTS archived_at           timestamptz;
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS school_elementary     numeric;
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS school_middle         numeric;
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS school_high           numeric;
 
 CREATE TABLE IF NOT EXISTS property_scores (
   property_id           uuid PRIMARY KEY REFERENCES properties(id) ON DELETE CASCADE,
