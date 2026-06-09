@@ -18,11 +18,11 @@ export default function RootLayout({
       <body>
         <div className="min-h-screen">
           <header className="border-b border-slate-200 bg-white">
-            <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
+            <div className="mx-auto flex max-w-6xl flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
               <Link href="/" className="text-lg font-semibold text-brand">
                 🏡 HouseScore
               </Link>
-              <nav className="flex items-center gap-4 text-sm">
+              <nav className="-mx-1 flex items-center gap-x-4 gap-y-2 overflow-x-auto whitespace-nowrap px-1 text-sm sm:flex-wrap sm:justify-end">
                 <Link href="/" className="hover:text-brand">
                   Houses
                 </Link>

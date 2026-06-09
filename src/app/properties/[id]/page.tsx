@@ -255,29 +255,34 @@ export default async function PropertyPage({
             return (
               <div
                 key={key}
-                className="flex flex-wrap items-center gap-2 rounded border border-slate-100 px-3 py-2"
+                className="rounded border border-slate-100 px-3 py-2"
               >
-                <span className="w-52 text-sm">{CATEGORY_LABEL[key]}</span>
-                <span className={`badge ${ratingClass(r)}`}>
-                  {fmtRating(r)}
-                </span>
-                <select
-                  name={key}
-                  defaultValue={r ?? ""}
-                  className="input w-24 py-1"
-                >
-                  <option value="">—</option>
-                  {[1, 2, 3, 4, 5].map((n) => (
-                    <option key={n} value={n}>
-                      {n}
-                    </option>
-                  ))}
-                </select>
-                <input
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-medium sm:w-52">
+                    {CATEGORY_LABEL[key]}
+                  </span>
+                  <span className={`badge ${ratingClass(r)}`}>
+                    {fmtRating(r)}
+                  </span>
+                  <select
+                    name={key}
+                    defaultValue={r ?? ""}
+                    className="input w-24 py-1"
+                  >
+                    <option value="">—</option>
+                    {[1, 2, 3, 4, 5].map((n) => (
+                      <option key={n} value={n}>
+                        {n}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <textarea
                   name={`note_${key}`}
                   defaultValue={noteMap.get(key) ?? ""}
                   placeholder="why (optional)"
-                  className="input grow py-1"
+                  rows={3}
+                  className="input mt-2 min-h-20 w-full"
                 />
               </div>
             );
