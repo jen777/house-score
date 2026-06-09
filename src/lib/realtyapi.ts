@@ -202,14 +202,20 @@ export function normalizeRedfin(raw: unknown): RedfinListing {
   const latest = obj(pub.latestListingInfo);
   const taxInfo = obj(pub.taxInfo);
   const pubAddr = obj(pub.addressInfo);
+  // The mortgage calculator carries clean numeric HOA dues (monthlyHoaDues).
+  const mortgage = obj(pub.mortgageCalculatorInfo);
   const addr = obj(main.propertyAddress ?? panelMain.propertyAddress);
 
-  // selectedAmenities is a flat [{header, content}] list (Style, MLS#, Built…).
+  // selectedAmenities is a flat [{header, content}] list (HOA Dues, MLS#, Built…).
+  // It appears under both aboveTheFold and the panel; merge so we don't miss a key.
   const amenity: Record<string, string> = {};
-  for (const a of (main.selectedAmenities ?? []) as Obj[]) {
+  for (const a of [
+    ...((main.selectedAmenities ?? []) as Obj[]),
+    ...((panelMain.selectedAmenities ?? []) as Obj[]),
+  ]) {
     const h = str(a?.header);
     const c = str(a?.content);
-    if (h && c) amenity[h.toLowerCase()] = c;
+    if (h && !(h.toLowerCase() in amenity) && c) amenity[h.toLowerCase()] = c;
   }
 
   const description =
@@ -252,7 +258,12 @@ export function normalizeRedfin(raw: unknown): RedfinListing {
     sqft: num(basic.totalSqFt ?? latest.sqFt ?? basic.sqFtFinished),
     lotAcres,
     yearBuilt: num(basic.yearBuilt ?? latest.yearBuilt ?? amenity["built"]),
-    hoaMonthly: num(main.monthlyHoaDues ?? main.hoaDues),
+    // HOA: prefer the clean monthly figure from the mortgage calculator, then
+    // the "HOA Dues" amenity text (e.g. "$87/mo"), then any direct field.
+    hoaMonthly:
+      num(mortgage.monthlyHoaDues) ??
+      leadingNumber(amenity["hoa dues"]) ??
+      num(main.monthlyHoaDues ?? main.hoaDues),
     taxesAnnual: num(taxInfo.taxesDue),
     daysOnMarket: null,
     mlsNumber: str(main.mlsId ?? panelMain.mlsId ?? amenity["mls#"]),
