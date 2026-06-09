@@ -81,6 +81,41 @@ function str(v: unknown): string | null {
   return s === "" ? null : s;
 }
 
+/**
+ * Unwrap an undici/fetch failure into log-friendly fields. `fetch failed` is a
+ * generic wrapper — the actionable detail (DNS ENOTFOUND, ECONNREFUSED, TLS
+ * cert error, ETIMEDOUT) is on `err.cause`, sometimes nested one more level.
+ */
+function describeFetchError(err: unknown): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (err instanceof Error) {
+    out.name = err.name;
+    out.message = err.message;
+  } else {
+    out.message = String(err);
+  }
+  // Walk the cause chain to find the underlying system error.
+  let cause: unknown = (err as { cause?: unknown })?.cause;
+  for (let depth = 0; cause && depth < 3; depth++) {
+    const c = cause as {
+      code?: unknown;
+      errno?: unknown;
+      syscall?: unknown;
+      hostname?: unknown;
+      message?: unknown;
+      cause?: unknown;
+    };
+    if (c.code != null) out.cause_code = c.code;
+    if (c.errno != null) out.cause_errno = c.errno;
+    if (c.syscall != null) out.cause_syscall = c.syscall;
+    if (c.hostname != null) out.cause_hostname = c.hostname;
+    if (c.message != null && out.cause_message == null)
+      out.cause_message = c.message;
+    cause = c.cause;
+  }
+  return out;
+}
+
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Obj = Record<string, any>;
 
@@ -239,19 +274,55 @@ export async function fetchRedfinByUrl(url: string): Promise<RedfinImport> {
 
   const endpoint = "/detailsbyurl";
   const path = `${endpoint}?property_url=${encodeURIComponent(url.trim())}`;
+  const target = `${BASE_URL}${path}`;
+  let host: string | undefined;
+  try {
+    host = new URL(BASE_URL).host;
+  } catch {
+    host = undefined;
+  }
   const started = Date.now();
-  logInfo("realtyapi", "fetch Redfin details by url", { url });
+  logInfo("realtyapi", "fetch Redfin details by url", {
+    url,
+    baseUrl: BASE_URL,
+    host,
+    keyLen: apiKey.length,
+  });
+
+  // Time-box the request so a hung connection surfaces as a clear timeout
+  // rather than appearing to silently stall.
+  const controller = new AbortController();
+  const timeoutMs = 20_000;
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   let res: Response;
   try {
-    res = await fetch(`${BASE_URL}${path}`, {
+    res = await fetch(target, {
       headers: { "x-realtyapi-key": apiKey, Accept: "application/json" },
       // Import is explicit and we persist the result; never use Next's fetch cache.
       cache: "no-store",
+      signal: controller.signal,
     });
   } catch (err) {
-    logError("realtyapi", "network error", { endpoint, error: err });
-    throw new Error("RealtyAPI request failed (network error)");
+    const aborted = controller.signal.aborted;
+    logError("realtyapi", aborted ? "request timed out" : "network error", {
+      endpoint,
+      host,
+      baseUrl: BASE_URL,
+      ms: Date.now() - started,
+      timeoutMs: aborted ? timeoutMs : undefined,
+      ...describeFetchError(err),
+    });
+    if (aborted) {
+      throw new Error(
+        `RealtyAPI request timed out after ${timeoutMs / 1000}s (host ${host})`,
+      );
+    }
+    throw new Error(
+      `RealtyAPI request failed to reach ${host} (network error)`,
+    );
+  } finally {
+    clearTimeout(timer);
   }
 
   if (!res.ok) {
