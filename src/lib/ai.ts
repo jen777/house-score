@@ -345,6 +345,11 @@ Rules:
   times) when provided.
 - Treat RentCast/property-API figures and computed drive times as facts; treat the
   listing description as seller marketing (useful but optimistic).
+- The buyer's own notes (per-category notes, freeform notes, owner notes) are the
+  strongest signal of their priorities and firsthand observations — weight them
+  heavily and let them override generic inferences.
+- If a "must-have issue / deal-breaker flag" is present, reflect that seriously in
+  the relevant category (usually a low rating) and call it out in the rationale.
 - When data for a category is thin, rate conservatively toward the middle (3) and
   say so in the rationale — never invent facts.
 - Each rationale is ONE short sentence citing the specific evidence used.

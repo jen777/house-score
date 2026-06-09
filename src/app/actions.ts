@@ -15,6 +15,7 @@ import {
   propertyDriveTimes,
   places,
   scoreNotes,
+  hoaDetails,
 } from "@/db/schema";
 import { AUTH_COOKIE, verifyPassword, expectedToken } from "@/lib/auth";
 import {
@@ -41,7 +42,12 @@ import {
   getScoringConfig,
   SCORE_COLUMN,
 } from "@/lib/recompute";
-import { CATEGORIES, type ScoringInputs } from "@/lib/scoring";
+import {
+  CATEGORIES,
+  CATEGORY_LABEL,
+  type CategoryKey,
+  type ScoringInputs,
+} from "@/lib/scoring";
 
 // ---- Auth ----
 
@@ -581,6 +587,9 @@ function buildRatingDossier(args: {
   prop: typeof properties.$inferSelect;
   features: typeof propertyFeatures.$inferSelect | undefined;
   marketData: PropertyMarketData | undefined;
+  hoa: typeof hoaDetails.$inferSelect | undefined;
+  notes: { note: string; category: string | null }[];
+  categoryNotes: { category: string; note: string | null }[];
   drives: {
     name: string;
     category: string | null;
@@ -589,16 +598,24 @@ function buildRatingDossier(args: {
   }[];
   inputs: ScoringInputs;
 }): string {
-  const { prop, features, marketData, drives, inputs } = args;
+  const { prop, features, marketData, hoa, notes, categoryNotes, drives, inputs } =
+    args;
   const sections: string[] = [];
 
   const loc = [prop.communityHoa, prop.cityArea, prop.city, prop.state, prop.zip]
     .filter(Boolean)
     .join(", ");
+  const meta = [
+    prop.propertyType ? `Type: ${prop.propertyType}` : null,
+    prop.status ? `Status: ${prop.status}` : null,
+    prop.source ? `Source: ${prop.source}` : null,
+    prop.mlsNumber ? `MLS#: ${prop.mlsNumber}` : null,
+    prop.listingUrl ? `Listing URL: ${prop.listingUrl}` : null,
+  ].filter(Boolean);
   sections.push(
     `Address: ${prop.address}` +
       (loc ? `\nArea: ${loc}` : "") +
-      (prop.propertyType ? `\nType: ${prop.propertyType}` : ""),
+      (meta.length ? `\n${meta.join("\n")}` : ""),
   );
 
   // Listed facts (the property row — may be user-entered or RentCast-overwritten).
@@ -636,6 +653,9 @@ function buildRatingDossier(args: {
     "Commute → Charlotte/Uptown",
     prop.commuteCharlotteMin != null ? `${prop.commuteCharlotteMin} min` : null,
   );
+  // The must-have gate forces a Pass regardless of score — make it explicit.
+  if (prop.mustHaveIssue && prop.mustHaveIssue !== "No")
+    push("Must-have issue / deal-breaker flag", prop.mustHaveIssue);
   if (facts.length) sections.push(`Listed facts:\n${facts.join("\n")}`);
 
   const ownerNotes: string[] = [];
@@ -644,6 +664,25 @@ function buildRatingDossier(args: {
   if (prop.risksRedFlags)
     ownerNotes.push(`- Risks/red flags: ${prop.risksRedFlags}`);
   if (ownerNotes.length) sections.push(`Owner notes:\n${ownerNotes.join("\n")}`);
+
+  // Structured HOA record (separate from the listing's HOA hints).
+  if (hoa) {
+    const h: string[] = [];
+    if (hoa.hoaExists != null) h.push(`- Has HOA: ${hoa.hoaExists ? "yes" : "no"}`);
+    if (hoa.hoaName) h.push(`- Name: ${hoa.hoaName}`);
+    if (hoa.feeAmount != null)
+      h.push(
+        `- Fee: ${dossierMoney(hoa.feeAmount)}${
+          hoa.feeFrequency ? ` (${hoa.feeFrequency})` : ""
+        }`,
+      );
+    const amen = jsonList(hoa.amenities);
+    if (amen.length) h.push(`- Amenities: ${amen.join("; ")}`);
+    const restr = jsonList(hoa.restrictions);
+    if (restr.length) h.push(`- Restrictions: ${restr.join("; ")}`);
+    if (hoa.managementCompany) h.push(`- Management: ${hoa.managementCompany}`);
+    if (h.length) sections.push(`HOA details:\n${h.join("\n")}`);
+  }
 
   if (features) {
     const fx: string[] = [];
@@ -677,6 +716,37 @@ function buildRatingDossier(args: {
     );
   if (driveLines.length)
     sections.push(`Drive times to saved places:\n${driveLines.join("\n")}`);
+
+  // The buyer's own per-category reasoning — the most direct signal of their
+  // priorities, so the model can align its ratings with their judgment.
+  const catNoteLines = categoryNotes
+    .filter((n) => n.note && n.note.trim())
+    .map((n) => {
+      const label =
+        CATEGORY_LABEL[n.category as CategoryKey] ?? n.category;
+      return `- ${label}: ${n.note!.trim()}`;
+    });
+  if (catNoteLines.length)
+    sections.push(`Buyer's per-category notes:\n${catNoteLines.join("\n")}`);
+
+  // Freeform notes the buyer logged against the property.
+  const noteLines = notes
+    .filter((n) => n.note && n.note.trim())
+    .map(
+      (n) =>
+        `- ${n.category && n.category !== "general" ? `[${n.category}] ` : ""}${n.note.trim()}`,
+    );
+  if (noteLines.length)
+    sections.push(`Buyer's notes on this property:\n${noteLines.join("\n")}`);
+
+  // The seller's verbatim listing copy. The AI analysis above is a distilled
+  // view of this; include the raw text too so the model can catch nuance the
+  // extraction may have dropped (treat as optimistic marketing).
+  if (prop.listingDescription && prop.listingDescription.trim()) {
+    const desc = prop.listingDescription.trim();
+    const clipped = desc.length > 4000 ? `${desc.slice(0, 4000)}…` : desc;
+    sections.push(`Seller's listing description (verbatim, marketing):\n${clipped}`);
+  }
 
   sections.push(
     [
@@ -715,6 +785,18 @@ export async function suggestRatingsAction(formData: FormData) {
     .from(propertyFeatures)
     .where(eq(propertyFeatures.propertyId, id));
   const marketData = await loadMarketData(id);
+  const [hoa] = await db
+    .select()
+    .from(hoaDetails)
+    .where(eq(hoaDetails.propertyId, id));
+  const noteRows = await db
+    .select()
+    .from(propertyNotes)
+    .where(eq(propertyNotes.propertyId, id));
+  const catNoteRows = await db
+    .select()
+    .from(scoreNotes)
+    .where(eq(scoreNotes.propertyId, id));
   const driveRows = await db
     .select()
     .from(propertyDriveTimes)
@@ -737,6 +819,12 @@ export async function suggestRatingsAction(formData: FormData) {
       prop: prop!,
       features,
       marketData,
+      hoa,
+      notes: noteRows.map((n) => ({ note: n.note, category: n.category })),
+      categoryNotes: catNoteRows.map((n) => ({
+        category: n.category,
+        note: n.note,
+      })),
       drives,
       inputs,
     });
@@ -745,6 +833,9 @@ export async function suggestRatingsAction(formData: FormData) {
       dossierChars: dossier.length,
       hasExtraction: !!features,
       hasMarketData: !!marketData,
+      hasHoa: !!hoa,
+      notes: noteRows.length,
+      categoryNotes: catNoteRows.length,
       driveTimes: drives.length,
     });
 
