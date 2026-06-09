@@ -24,7 +24,7 @@ import {
   formatMarketData,
   type PropertyMarketData,
 } from "@/lib/ai";
-import { geocode } from "@/lib/geocode";
+import { geocode, formatAddress } from "@/lib/geocode";
 import { driveTimes } from "@/lib/drivetime";
 import { logInfo, logWarn, logError } from "@/lib/log";
 import {
@@ -500,7 +500,16 @@ export async function enrichPropertyAction(formData: FormData) {
   }
 
   try {
-    const e = await enrichByAddress(prop!.address);
+    // RentCast needs a full, geocodable address — passing just the street line
+    // ("17224 Cambridge Woods Ct") returns a 400 "could not be parsed or
+    // geolocated". Compose street + city/state/zip the same way geocoding does.
+    const fullAddress = formatAddress({
+      address: prop!.address,
+      city: prop!.city,
+      state: prop!.state,
+      zip: prop!.zip,
+    });
+    const e = await enrichByAddress(fullAddress);
     const r = e.record;
 
     // 1. Overwrite property record fields where RentCast supplied a value.
