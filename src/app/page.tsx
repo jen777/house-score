@@ -1,13 +1,14 @@
 import Link from "next/link";
 import { desc, eq, isNull, isNotNull } from "drizzle-orm";
 import { db } from "@/db";
-import { properties, propertyScores } from "@/db/schema";
+import { properties, propertyScores, hoaDetails } from "@/db/schema";
 import { archivePropertyAction } from "./actions";
 import {
   STATUS_LABEL,
   STATUS_CLASS,
   scoreClass,
   recClass,
+  ratingClass,
   fmtMoney,
   fmtNum,
   fmtScore,
@@ -27,9 +28,11 @@ export default async function HomePage() {
       estMonthly: properties.estMonthlyPayment,
       total: propertyScores.weightedScore,
       recommendation: propertyScores.recommendation,
+      hoaRating: hoaDetails.rating,
     })
     .from(properties)
     .leftJoin(propertyScores, eq(properties.id, propertyScores.propertyId))
+    .leftJoin(hoaDetails, eq(properties.id, hoaDetails.propertyId))
     .where(isNull(properties.archivedAt))
     .orderBy(desc(propertyScores.weightedScore));
 
@@ -98,13 +101,14 @@ export default async function HomePage() {
         </div>
       ) : (
         <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
-          <table className="w-full min-w-[640px] text-sm">
+          <table className="w-full min-w-[720px] text-sm">
             <thead className="bg-slate-50 text-left text-slate-500">
               <tr>
                 <th className="px-4 py-2 font-medium">Score</th>
                 <th className="px-4 py-2 font-medium">Recommendation</th>
                 <th className="px-4 py-2 font-medium">Address</th>
                 <th className="px-4 py-2 font-medium">Status</th>
+                <th className="px-4 py-2 font-medium">HOA</th>
                 <th className="px-4 py-2 font-medium">Price</th>
                 <th className="px-4 py-2 font-medium">Est. monthly</th>
                 <th className="px-4 py-2 font-medium"></th>
@@ -146,6 +150,18 @@ export default async function HomePage() {
                     >
                       {STATUS_LABEL[r.status ?? "New"] ?? r.status}
                     </span>
+                  </td>
+                  <td className="px-4 py-2">
+                    {r.hoaRating == null ? (
+                      <span className="text-slate-300">—</span>
+                    ) : (
+                      <span
+                        className={`badge ${ratingClass(Number(r.hoaRating))}`}
+                        title="HOA validator rating (0–5)"
+                      >
+                        {Number(r.hoaRating).toFixed(1)}
+                      </span>
+                    )}
                   </td>
                   <td className="px-4 py-2">{fmtMoney(r.price)}</td>
                   <td className="px-4 py-2">{fmtMoney(r.estMonthly)}</td>
