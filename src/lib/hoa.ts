@@ -184,6 +184,24 @@ export interface HoaResearchResult {
   model: string;
 }
 
+// Coarse pipeline stages, surfaced to the UI so the user can see progress.
+export type HoaStage =
+  | "starting"
+  | "searching"
+  | "reading"
+  | "writing"
+  | "summarizing"
+  | "saving"
+  | "done";
+
+export interface HoaProgress {
+  stage: HoaStage;
+  /** 1-based count of the current web search, when stage === "searching". */
+  searchIndex?: number;
+}
+
+export type HoaProgressFn = (p: HoaProgress) => void;
+
 type Tools = Anthropic.MessageCreateParamsNonStreaming["tools"];
 
 function systemBlocks() {
@@ -239,6 +257,70 @@ async function create(
   }
 }
 
+/**
+ * Streaming variant of `create`. Web search runs server-side inside one request,
+ * so streaming is the only way to observe mid-request stages: we watch the
+ * content blocks and report each web search, the reading of results, and the
+ * model writing its answer. Returns the assembled final message.
+ */
+async function createStreaming(
+  client: Anthropic,
+  model: string,
+  messages: Anthropic.MessageParam[],
+  tools: Tools,
+  onProgress?: HoaProgressFn,
+): Promise<Anthropic.Message> {
+  const started = Date.now();
+  logInfo("hoa", "messages.stream request", {
+    model,
+    tools: tools?.map((t) => t.name),
+  });
+  const stream = client.messages.stream({
+    model,
+    max_tokens: 3000,
+    system: systemBlocks(),
+    tools,
+    messages,
+  });
+
+  let searches = 0;
+  try {
+    for await (const event of stream) {
+      if (event.type !== "content_block_start") continue;
+      const blockType = event.content_block.type as string;
+      if (blockType === "server_tool_use") {
+        searches += 1;
+        onProgress?.({ stage: "searching", searchIndex: searches });
+      } else if (blockType === "web_search_tool_result") {
+        onProgress?.({ stage: "reading" });
+      } else if (blockType === "text") {
+        onProgress?.({ stage: "writing" });
+      } else if (blockType === "tool_use") {
+        onProgress?.({ stage: "saving" });
+      }
+    }
+    const msg = await stream.finalMessage();
+    logInfo("hoa", "messages.stream response", {
+      model,
+      ms: Date.now() - started,
+      stopReason: msg.stop_reason,
+      searches,
+      inputTokens: msg.usage?.input_tokens,
+      outputTokens: msg.usage?.output_tokens,
+    });
+    return msg;
+  } catch (err) {
+    const status = err instanceof Anthropic.APIError ? err.status : undefined;
+    logError("hoa", "messages.stream failed", {
+      model,
+      status,
+      ms: Date.now() - started,
+      error: err,
+    });
+    throw err;
+  }
+}
+
 function findToolUse(
   message: Anthropic.Message,
 ): Anthropic.ToolUseBlock | null {
@@ -271,9 +353,11 @@ function isWebSearchUnavailable(err: unknown): boolean {
  */
 export async function researchHoa(
   input: HoaResearchInput,
+  onProgress?: HoaProgressFn,
 ): Promise<HoaResearchResult> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error("ANTHROPIC_API_KEY is not configured");
+  onProgress?.({ stage: "starting" });
 
   const model = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-6";
   const maxSearches = Number(process.env.HOA_MAX_WEB_SEARCHES || 6);
@@ -310,12 +394,20 @@ export async function researchHoa(
   });
 
   // 1. Let the model search the web, then call our tool (tool_choice: auto).
+  //    Streamed so we can report each search / read / write stage as it happens.
   let message: Anthropic.Message;
   try {
-    message = await create(client, model, messages, [webSearchTool, HOA_TOOL]);
+    message = await createStreaming(
+      client,
+      model,
+      messages,
+      [webSearchTool, HOA_TOOL],
+      onProgress,
+    );
   } catch (err) {
     if (!isWebSearchUnavailable(err)) throw err;
     logWarn("hoa", "web search unavailable; retrying knowledge-only");
+    onProgress?.({ stage: "writing" });
     message = await create(client, model, messages, [HOA_TOOL]);
   }
 
@@ -326,6 +418,7 @@ export async function researchHoa(
   //    resolved web_search blocks the tool-free follow-up wouldn't accept).
   if (!toolUse) {
     logWarn("hoa", "no tool call yet; requesting structured output");
+    onProgress?.({ stage: "summarizing" });
     const priorText = message.content
       .filter((c): c is Anthropic.TextBlock => c.type === "text")
       .map((c) => c.text)

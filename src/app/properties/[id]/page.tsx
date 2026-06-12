@@ -52,8 +52,8 @@ import {
   saveScoresAction,
   suggestRatingsAction,
   addNoteAction,
-  researchHoaAction,
 } from "../../actions";
+import HoaValidatorButton from "./HoaValidatorButton";
 
 export const dynamic = "force-dynamic";
 
@@ -480,12 +480,11 @@ export default async function PropertyPage({
       <section className="card">
         <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-lg font-semibold">HOA validator</h2>
-          <form action={researchHoaAction}>
-            <input type="hidden" name="id" value={prop.id} />
-            <button className="btn" disabled={!hoaResearchConfigured()}>
-              {hoa ? "Re-validate HOA" : "Validate HOA"}
-            </button>
-          </form>
+          <HoaValidatorButton
+            propertyId={prop.id}
+            hasResult={!!hoa}
+            disabled={!hoaResearchConfigured()}
+          />
         </div>
         <p className="mb-3 text-xs text-slate-400">
           Searches the web for this property’s HOA — dues, rules &amp;

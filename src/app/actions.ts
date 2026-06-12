@@ -25,6 +25,7 @@ import {
   type PropertyMarketData,
 } from "@/lib/ai";
 import { researchHoa } from "@/lib/hoa";
+import { persistHoaResearch } from "@/lib/hoa-persist";
 import { geocode, formatAddress } from "@/lib/geocode";
 import { driveTimes } from "@/lib/drivetime";
 import { logInfo, logWarn, logError } from "@/lib/log";
@@ -513,39 +514,7 @@ export async function researchHoaAction(formData: FormData) {
       listingText: prop!.listingDescription,
     });
 
-    const values = {
-      hoaExists: data.hoa_exists,
-      hoaName: data.hoa_name,
-      managementCompany: data.management_company,
-      managementContact: data.management_contact,
-      website: data.website,
-      feeAmount: data.fee_amount == null ? null : String(data.fee_amount),
-      feeFrequency: data.fee_frequency,
-      specialAssessments: data.special_assessments,
-      amenities: data.amenities,
-      restrictions: data.rules,
-      petPolicy: data.pet_policy,
-      rentalPolicy: data.rental_policy,
-      declarationUrl: data.declaration_url,
-      rating: data.rating == null ? null : String(data.rating),
-      reviewCount: data.review_count == null ? null : Math.round(data.review_count),
-      pros: data.pros,
-      cons: data.cons,
-      verdict: data.verdict,
-      openQuestions: data.open_questions,
-      sources: data.sources,
-      sourceUrl: data.sources[0]?.url ?? null,
-      confidenceLevel: data.confidence,
-      model,
-      researchedAt: new Date(),
-      updatedAt: new Date(),
-    };
-
-    await db
-      .insert(hoaDetails)
-      .values({ propertyId: id, ...values })
-      .onConflictDoUpdate({ target: hoaDetails.propertyId, set: values });
-
+    await persistHoaResearch(id, data, model);
     revalidatePath(`/properties/${id}`);
   } catch (e) {
     const msg = e instanceof Error ? e.message : "HOA research failed";
