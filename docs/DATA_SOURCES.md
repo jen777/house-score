@@ -109,6 +109,28 @@ Pool/clubhouse: Yes       source: listing + community website confidence: Medium
 Rental restrictions: ?    source: not found                   confidence: Low
 ```
 
+### HOA validator (implemented)
+
+The **HOA validator** on each property page automates the assembly above. It
+calls Anthropic with the **web-search tool** to research the specific HOA /
+community and its management company across public sources — official HOA and
+management pages, CC&Rs / bylaws, county records, and resident reviews/ratings
+(Google, Yelp, Reddit, Nextdoor, BBB) — then synthesizes:
+
+- an overall **rating (0–5)** and a plain-English **verdict** on how good the
+  HOA is, with concrete **pros / cons**;
+- structured fields: dues + frequency, amenities, **rules & restrictions**, pet
+  and rental policies, special assessments, management company + contact,
+  website, and a CC&R / declaration link when found;
+- **open questions** to verify directly with the HOA, a **confidence** level,
+  and the **sources** cited.
+
+Results persist to `hoa_details` (server action `researchHoaAction`, library
+`src/lib/hoa.ts`). It needs `ANTHROPIC_API_KEY`; optional `HOA_MAX_WEB_SEARCHES`
+(default 6) caps web-search rounds. If web search isn't enabled on the account,
+it falls back to a knowledge-only answer. Output is AI-generated from public
+sources and is meant to inform — not replace — the HOA's own disclosures.
+
 ## References
 
 - Redfin Terms of Use — prohibits automated crawling/scraping.

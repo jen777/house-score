@@ -13,9 +13,9 @@ import {
   propertyEnrichment,
   propertyFieldProvenance,
   propertyDriveTimes,
+  hoaDetails,
   places,
   scoreNotes,
-  hoaDetails,
 } from "@/db/schema";
 import { AUTH_COOKIE, verifyPassword, expectedToken } from "@/lib/auth";
 import {
@@ -24,6 +24,7 @@ import {
   formatMarketData,
   type PropertyMarketData,
 } from "@/lib/ai";
+import { researchHoa } from "@/lib/hoa";
 import { geocode, formatAddress } from "@/lib/geocode";
 import { driveTimes } from "@/lib/drivetime";
 import { logInfo, logWarn, logError } from "@/lib/log";
@@ -473,6 +474,82 @@ export async function extractAction(formData: FormData) {
   } catch (e) {
     const msg = e instanceof Error ? e.message : "extraction failed";
     logError("extract", "listing feature extraction failed", { id, error: e });
+    redirect(`/properties/${id}?error=${encodeURIComponent(msg)}`);
+  }
+}
+
+// ---- HOA validator (Phase 2) ----
+
+/**
+ * Research the HOA that governs a property and store the structured review in
+ * hoa_details. Uses the Anthropic web-search tool to gather ratings, rules,
+ * fees, amenities and resident sentiment, then synthesizes an overall verdict.
+ * Needs a full, geocodable address (composed the same way geocoding does).
+ */
+export async function researchHoaAction(formData: FormData) {
+  const id = String(formData.get("id"));
+  const [prop] = await db
+    .select()
+    .from(properties)
+    .where(eq(properties.id, id));
+  if (!prop) redirect("/");
+  if (!prop!.address?.trim()) {
+    redirect(`/properties/${id}?error=no-address`);
+  }
+
+  try {
+    const fullAddress = formatAddress({
+      address: prop!.address,
+      city: prop!.city,
+      state: prop!.state,
+      zip: prop!.zip,
+    });
+
+    const { data, model } = await researchHoa({
+      address: fullAddress,
+      hoaName: prop!.communityHoa,
+      knownFeeMonthly:
+        prop!.hoaMonthly == null ? null : Number(prop!.hoaMonthly),
+      listingText: prop!.listingDescription,
+    });
+
+    const values = {
+      hoaExists: data.hoa_exists,
+      hoaName: data.hoa_name,
+      managementCompany: data.management_company,
+      managementContact: data.management_contact,
+      website: data.website,
+      feeAmount: data.fee_amount == null ? null : String(data.fee_amount),
+      feeFrequency: data.fee_frequency,
+      specialAssessments: data.special_assessments,
+      amenities: data.amenities,
+      restrictions: data.rules,
+      petPolicy: data.pet_policy,
+      rentalPolicy: data.rental_policy,
+      declarationUrl: data.declaration_url,
+      rating: data.rating == null ? null : String(data.rating),
+      reviewCount: data.review_count == null ? null : Math.round(data.review_count),
+      pros: data.pros,
+      cons: data.cons,
+      verdict: data.verdict,
+      openQuestions: data.open_questions,
+      sources: data.sources,
+      sourceUrl: data.sources[0]?.url ?? null,
+      confidenceLevel: data.confidence,
+      model,
+      researchedAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    await db
+      .insert(hoaDetails)
+      .values({ propertyId: id, ...values })
+      .onConflictDoUpdate({ target: hoaDetails.propertyId, set: values });
+
+    revalidatePath(`/properties/${id}`);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "HOA research failed";
+    logError("hoa", "HOA research action failed", { id, error: e });
     redirect(`/properties/${id}?error=${encodeURIComponent(msg)}`);
   }
 }

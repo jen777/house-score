@@ -87,14 +87,28 @@ export const hoaDetails = pgTable("hoa_details", {
   hoaExists: boolean("hoa_exists"),
   hoaName: text("hoa_name"),
   feeAmount: numeric("fee_amount"),
-  feeFrequency: text("fee_frequency"), // monthly|quarterly|annual|one_time|unknown
+  feeFrequency: text("fee_frequency"), // monthly|quarterly|semi_annual|annual|one_time|unknown
   amenities: jsonb("amenities"),
-  restrictions: jsonb("restrictions"),
+  restrictions: jsonb("restrictions"), // notable rules / CC&R restrictions
   managementCompany: text("management_company"),
+  managementContact: text("management_contact"),
   website: text("website"),
+  specialAssessments: text("special_assessments"),
+  petPolicy: text("pet_policy"),
+  rentalPolicy: text("rental_policy"),
   declarationUrl: text("declaration_url"),
+  // HOA-validator review (web-research): overall verdict + ratings.
+  rating: numeric("rating"), // overall quality 0–5
+  reviewCount: integer("review_count"),
+  pros: jsonb("pros"),
+  cons: jsonb("cons"),
+  verdict: text("verdict"),
+  openQuestions: jsonb("open_questions"),
+  sources: jsonb("sources"), // [{ title, url }]
   sourceUrl: text("source_url"),
   confidenceLevel: text("confidence_level").default("unknown"),
+  model: text("model"),
+  researchedAt: timestamp("researched_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
 });

@@ -104,21 +104,47 @@ CREATE TABLE IF NOT EXISTS score_notes (
 );
 
 CREATE TABLE IF NOT EXISTS hoa_details (
-  property_id        uuid PRIMARY KEY REFERENCES properties(id) ON DELETE CASCADE,
-  hoa_exists         boolean,
-  hoa_name           text,
-  fee_amount         numeric,
-  fee_frequency      text,
-  amenities          jsonb,
-  restrictions       jsonb,
-  management_company text,
-  website            text,
-  declaration_url    text,
-  source_url         text,
-  confidence_level   text DEFAULT 'unknown',
-  created_at         timestamptz DEFAULT now(),
-  updated_at         timestamptz DEFAULT now()
+  property_id         uuid PRIMARY KEY REFERENCES properties(id) ON DELETE CASCADE,
+  hoa_exists          boolean,
+  hoa_name            text,
+  fee_amount          numeric,
+  fee_frequency       text,
+  amenities           jsonb,
+  restrictions        jsonb,
+  management_company  text,
+  management_contact  text,
+  website             text,
+  special_assessments text,
+  pet_policy          text,
+  rental_policy       text,
+  declaration_url     text,
+  rating              numeric,
+  review_count        integer,
+  pros                jsonb,
+  cons                jsonb,
+  verdict             text,
+  open_questions      jsonb,
+  sources             jsonb,
+  source_url          text,
+  confidence_level    text DEFAULT 'unknown',
+  model               text,
+  researched_at       timestamptz,
+  created_at          timestamptz DEFAULT now(),
+  updated_at          timestamptz DEFAULT now()
 );
+ALTER TABLE hoa_details ADD COLUMN IF NOT EXISTS management_contact  text;
+ALTER TABLE hoa_details ADD COLUMN IF NOT EXISTS special_assessments text;
+ALTER TABLE hoa_details ADD COLUMN IF NOT EXISTS pet_policy          text;
+ALTER TABLE hoa_details ADD COLUMN IF NOT EXISTS rental_policy       text;
+ALTER TABLE hoa_details ADD COLUMN IF NOT EXISTS rating              numeric;
+ALTER TABLE hoa_details ADD COLUMN IF NOT EXISTS review_count        integer;
+ALTER TABLE hoa_details ADD COLUMN IF NOT EXISTS pros                jsonb;
+ALTER TABLE hoa_details ADD COLUMN IF NOT EXISTS cons                jsonb;
+ALTER TABLE hoa_details ADD COLUMN IF NOT EXISTS verdict             text;
+ALTER TABLE hoa_details ADD COLUMN IF NOT EXISTS open_questions      jsonb;
+ALTER TABLE hoa_details ADD COLUMN IF NOT EXISTS sources             jsonb;
+ALTER TABLE hoa_details ADD COLUMN IF NOT EXISTS model               text;
+ALTER TABLE hoa_details ADD COLUMN IF NOT EXISTS researched_at       timestamptz;
 
 CREATE TABLE IF NOT EXISTS property_features (
   property_id           uuid PRIMARY KEY REFERENCES properties(id) ON DELETE CASCADE,

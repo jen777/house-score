@@ -10,6 +10,7 @@ import {
   propertyEnrichment,
   propertyFieldProvenance,
   propertyDriveTimes,
+  hoaDetails,
   places,
   scoreNotes,
 } from "@/db/schema";
@@ -20,6 +21,7 @@ import {
 } from "@/lib/scoring";
 import { SCORE_COLUMN } from "@/lib/recompute";
 import { rentcastConfigured } from "@/lib/rentcast";
+import { hoaResearchConfigured } from "@/lib/hoa";
 import { driveTimesConfigured } from "@/lib/drivetime";
 import { aiConfigured } from "@/lib/ai";
 import {
@@ -50,6 +52,7 @@ import {
   saveScoresAction,
   suggestRatingsAction,
   addNoteAction,
+  researchHoaAction,
 } from "../../actions";
 
 export const dynamic = "force-dynamic";
@@ -66,6 +69,16 @@ const ERROR_MESSAGE: Record<string, string> = {
 function list(v: unknown): string[] {
   return Array.isArray(v) ? (v as string[]) : [];
 }
+
+// Suffix shown after an HOA fee amount, by frequency.
+const FEE_FREQUENCY_LABEL: Record<string, string> = {
+  monthly: "/mo",
+  quarterly: "/qtr",
+  semi_annual: "/6mo",
+  annual: "/yr",
+  one_time: " (one-time)",
+  unknown: "",
+};
 
 export default async function PropertyPage({
   params,
@@ -108,6 +121,10 @@ export default async function PropertyPage({
     .select()
     .from(propertyFieldProvenance)
     .where(eq(propertyFieldProvenance.propertyId, id));
+  const [hoa] = await db
+    .select()
+    .from(hoaDetails)
+    .where(eq(hoaDetails.propertyId, id));
   const placeRows = await db.select().from(places).orderBy(asc(places.createdAt));
   const driveRows = await db
     .select()
@@ -130,6 +147,9 @@ export default async function PropertyPage({
         distanceMi: number | null;
         daysOld: number | null;
       }>)
+    : [];
+  const hoaSources = Array.isArray(hoa?.sources)
+    ? (hoa!.sources as Array<{ title: string | null; url: string }>)
     : [];
   const ratingOf = (key: CategoryKey): number | null => {
     const raw = scores?.[SCORE_COLUMN[key] as keyof typeof scores];
@@ -451,6 +471,175 @@ export default async function PropertyPage({
                 ? new Date(enrichment.fetchedAt).toLocaleString()
                 : "—"}{" "}
               from RentCast. Value/rent are AVM estimates, not list prices.
+            </p>
+          </div>
+        )}
+      </section>
+
+      {/* HOA validator */}
+      <section className="card">
+        <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-lg font-semibold">HOA validator</h2>
+          <form action={researchHoaAction}>
+            <input type="hidden" name="id" value={prop.id} />
+            <button className="btn" disabled={!hoaResearchConfigured()}>
+              {hoa ? "Re-validate HOA" : "Validate HOA"}
+            </button>
+          </form>
+        </div>
+        <p className="mb-3 text-xs text-slate-400">
+          Searches the web for this property’s HOA — dues, rules &amp;
+          restrictions, amenities, management, and resident ratings — and
+          summarizes how good the HOA is. AI-generated from public sources;
+          verify anything critical with the HOA directly.
+        </p>
+        {!hoaResearchConfigured() ? (
+          <p className="text-sm text-slate-400">
+            Set{" "}
+            <code className="rounded bg-slate-100 px-1">ANTHROPIC_API_KEY</code>{" "}
+            to enable HOA research.
+          </p>
+        ) : !hoa ? (
+          <p className="text-sm text-slate-400">
+            Not validated yet. Click “Validate HOA”.
+          </p>
+        ) : (
+          <div className="space-y-4 text-sm">
+            <div className="flex flex-wrap items-center gap-3">
+              <span
+                className={`badge ${ratingClass(
+                  hoa.rating == null ? null : Number(hoa.rating),
+                )} text-base`}
+              >
+                {hoa.rating == null
+                  ? "Unrated"
+                  : `${Number(hoa.rating).toFixed(1)} / 5`}
+              </span>
+              <span className={`badge ${confidenceClass(hoa.confidenceLevel)}`}>
+                {hoa.confidenceLevel ?? "unknown"} confidence
+              </span>
+              {hoa.hoaExists === false ? (
+                <span className="badge bg-slate-100 text-slate-600">
+                  No HOA found
+                </span>
+              ) : null}
+              {hoa.reviewCount != null ? (
+                <span className="text-xs text-slate-400">
+                  {hoa.reviewCount} reviews found
+                </span>
+              ) : null}
+            </div>
+
+            {hoa.verdict ? (
+              <p className="rounded bg-slate-50 px-3 py-2 italic text-slate-700">
+                {hoa.verdict}
+              </p>
+            ) : null}
+
+            <dl className="grid grid-cols-2 gap-x-6 gap-y-1 sm:grid-cols-4">
+              <Fact label="HOA name" value={hoa.hoaName ?? "—"} />
+              <Fact
+                label="Dues"
+                value={
+                  hoa.feeAmount
+                    ? `${fmtMoney(hoa.feeAmount)}${
+                        FEE_FREQUENCY_LABEL[hoa.feeFrequency ?? "unknown"] ?? ""
+                      }`
+                    : "—"
+                }
+              />
+              <Fact label="Management" value={hoa.managementCompany ?? "—"} />
+              <Fact label="Contact" value={hoa.managementContact ?? "—"} />
+            </dl>
+
+            {hoa.petPolicy || hoa.rentalPolicy || hoa.specialAssessments ? (
+              <div className="space-y-1">
+                {hoa.petPolicy ? (
+                  <p>
+                    <span className="text-slate-400">Pets:</span> {hoa.petPolicy}
+                  </p>
+                ) : null}
+                {hoa.rentalPolicy ? (
+                  <p>
+                    <span className="text-slate-400">Rentals:</span>{" "}
+                    {hoa.rentalPolicy}
+                  </p>
+                ) : null}
+                {hoa.specialAssessments ? (
+                  <p className="text-amber-800">
+                    <span className="text-slate-400">Assessments:</span>{" "}
+                    {hoa.specialAssessments}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+
+            <FeatureList title="Pros" items={list(hoa.pros)} />
+            <FeatureList title="Cons" items={list(hoa.cons)} tone="warn" />
+            <FeatureList title="Amenities" items={list(hoa.amenities)} />
+            <FeatureList
+              title="Rules & restrictions"
+              items={list(hoa.restrictions)}
+              tone="warn"
+            />
+            <FeatureList
+              title="Verify with the HOA"
+              items={list(hoa.openQuestions)}
+            />
+
+            {hoa.website || hoa.declarationUrl ? (
+              <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+                {hoa.website ? (
+                  <a
+                    className="text-brand hover:underline"
+                    href={hoa.website}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    HOA website ↗
+                  </a>
+                ) : null}
+                {hoa.declarationUrl ? (
+                  <a
+                    className="text-brand hover:underline"
+                    href={hoa.declarationUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    CC&amp;Rs / declaration ↗
+                  </a>
+                ) : null}
+              </div>
+            ) : null}
+
+            {hoaSources.length > 0 ? (
+              <div>
+                <p className="mb-1 text-xs font-medium text-slate-500">
+                  Sources
+                </p>
+                <ul className="space-y-0.5 text-xs">
+                  {hoaSources.map((s, i) => (
+                    <li key={i}>
+                      <a
+                        className="text-brand hover:underline"
+                        href={s.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        {s.title || s.url}
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+
+            <p className="text-xs text-slate-400">
+              Researched{" "}
+              {hoa.researchedAt
+                ? new Date(hoa.researchedAt).toLocaleString()
+                : "—"}
+              {hoa.model ? ` by ${hoa.model}` : ""} from public web sources.
             </p>
           </div>
         )}
