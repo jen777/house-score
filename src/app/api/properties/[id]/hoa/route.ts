@@ -35,8 +35,21 @@ export async function POST(
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
-      const send = (obj: unknown) =>
-        controller.enqueue(encoder.encode(JSON.stringify(obj) + "\n"));
+      let closed = false;
+      const send = (obj: unknown) => {
+        if (closed) return;
+        try {
+          controller.enqueue(encoder.encode(JSON.stringify(obj) + "\n"));
+        } catch {
+          // Client went away mid-stream; stop trying to write.
+          closed = true;
+        }
+      };
+
+      // Web search runs server-side with no bytes flowing for stretches; a
+      // heartbeat keeps proxies from idle-timing-out the connection before the
+      // "done" event arrives.
+      const heartbeat = setInterval(() => send({ type: "ping" }), 10000);
 
       try {
         send({ type: "progress", stage: "starting" });
@@ -78,7 +91,13 @@ export async function POST(
         logError("hoa", "HOA research route failed", { id, error: e });
         send({ type: "error", message });
       } finally {
-        controller.close();
+        clearInterval(heartbeat);
+        closed = true;
+        try {
+          controller.close();
+        } catch {
+          // Already closed by the runtime when the client disconnected.
+        }
       }
     },
   });

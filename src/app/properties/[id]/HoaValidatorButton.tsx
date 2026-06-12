@@ -18,7 +18,7 @@ const STAGE_META: Record<string, { label: string; pct: number }> = {
 type Status = "idle" | "running" | "error";
 
 interface ProgressEvent {
-  type: "progress" | "done" | "error";
+  type: "progress" | "done" | "error" | "ping";
   stage?: string;
   searchIndex?: number;
   message?: string;
@@ -84,14 +84,19 @@ export default function HoaValidatorButton({
             done = true;
             setStage("done");
           }
+          // "ping" is just a keepalive — ignore it.
         }
       }
 
-      if (!done) throw new Error("HOA research ended unexpectedly");
-
-      // Re-fetch the server component so the new findings render.
+      // If the connection dropped before "done" (e.g. a proxy idle-timeout), the
+      // server likely still finished and saved. Refresh to pick up the results
+      // rather than failing — the findings render if they're there.
       router.refresh();
       setStatus("idle");
+      if (!done) {
+        setError("Took longer than expected — refreshed to load the results.");
+        setStatus("error");
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "HOA research failed");
       setStatus("error");
