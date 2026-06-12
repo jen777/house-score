@@ -1,10 +1,10 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 // Ordered pipeline stages → label + how far along the bar should be. Mirrors the
-// stages emitted by researchHoa / the streaming route handler.
+// stages reported by the HOA-validator job.
 const STAGE_META: Record<string, { label: string; pct: number }> = {
   starting: { label: "Preparing…", pct: 8 },
   searching: { label: "Searching the web…", pct: 35 },
@@ -15,10 +15,12 @@ const STAGE_META: Record<string, { label: string; pct: number }> = {
   done: { label: "Done", pct: 100 },
 };
 
+const POLL_MS = 2000;
+
 type Status = "idle" | "running" | "error";
 
-interface ProgressEvent {
-  type: "progress" | "done" | "error" | "ping";
+interface JobStatus {
+  state: "idle" | "running" | "done" | "error";
   stage?: string;
   searchIndex?: number;
   message?: string;
@@ -38,65 +40,74 @@ export default function HoaValidatorButton({
   const [stage, setStage] = useState<string>("starting");
   const [searchIndex, setSearchIndex] = useState<number | undefined>();
   const [error, setError] = useState<string>("");
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const alive = useRef(true);
+
+  const endpoint = `/api/properties/${propertyId}/hoa`;
+
+  // On mount, resume the progress UI if a job is already running (e.g. the user
+  // reloaded the page mid-run). Cleans up the poll timer on unmount.
+  useEffect(() => {
+    alive.current = true;
+    fetch(endpoint)
+      .then((r) => r.json())
+      .then((j: JobStatus) => {
+        if (alive.current && j?.state === "running") {
+          setStatus("running");
+          setStage(j.stage ?? "starting");
+          setSearchIndex(j.searchIndex);
+          schedulePoll();
+        }
+      })
+      .catch(() => {});
+    return () => {
+      alive.current = false;
+      if (timer.current) clearTimeout(timer.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [propertyId]);
+
+  function schedulePoll() {
+    timer.current = setTimeout(poll, POLL_MS);
+  }
+
+  async function poll() {
+    if (!alive.current) return;
+    try {
+      const res = await fetch(endpoint);
+      const j: JobStatus = await res.json();
+      if (!alive.current) return;
+
+      if (j.state === "running") {
+        setStage(j.stage ?? "starting");
+        setSearchIndex(j.searchIndex);
+        schedulePoll();
+      } else if (j.state === "error") {
+        setError(j.message ?? "HOA research failed");
+        setStatus("error");
+      } else {
+        // "done" or "idle" — the result (if any) is in the DB; refresh to show it.
+        setStatus("idle");
+        router.refresh();
+      }
+    } catch {
+      // Transient network error while polling — try again.
+      if (alive.current) schedulePoll();
+    }
+  }
 
   async function run() {
     setStatus("running");
     setStage("starting");
     setSearchIndex(undefined);
     setError("");
-
     try {
-      const res = await fetch(`/api/properties/${propertyId}/hoa`, {
-        method: "POST",
-      });
-
-      if (!res.ok || !res.body) {
+      const res = await fetch(endpoint, { method: "POST" });
+      if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body?.error ?? `Request failed (${res.status})`);
       }
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      let done = false;
-
-      // Read newline-delimited JSON events as they stream in.
-      for (;;) {
-        const { value, done: streamDone } = await reader.read();
-        if (streamDone) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          let ev: ProgressEvent;
-          try {
-            ev = JSON.parse(line) as ProgressEvent;
-          } catch {
-            continue;
-          }
-          if (ev.type === "progress" && ev.stage) {
-            setStage(ev.stage);
-            setSearchIndex(ev.searchIndex);
-          } else if (ev.type === "error") {
-            throw new Error(ev.message ?? "HOA research failed");
-          } else if (ev.type === "done") {
-            done = true;
-            setStage("done");
-          }
-          // "ping" is just a keepalive — ignore it.
-        }
-      }
-
-      // If the connection dropped before "done" (e.g. a proxy idle-timeout), the
-      // server likely still finished and saved. Refresh to pick up the results
-      // rather than failing — the findings render if they're there.
-      router.refresh();
-      setStatus("idle");
-      if (!done) {
-        setError("Took longer than expected — refreshed to load the results.");
-        setStatus("error");
-      }
+      schedulePoll();
     } catch (e) {
       setError(e instanceof Error ? e.message : "HOA research failed");
       setStatus("error");
